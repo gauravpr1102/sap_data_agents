@@ -55,3 +55,35 @@ Dataset: seed 777, 6,000 materials per plant (18,000 material-plants).
 
 - **The live Claude API.** No API key was available on the build machine. Every Claude request is built and checked against a scripted client, but no real model call was made. That means the agent's actual answer quality and the Claude reply classifier's accuracy are still unmeasured. Run `python -m sapkit eval --live` and `python -m sapkit replies` with a key to measure both.
 - **Real SAP data and real mailboxes.** Only the synthetic data and the mock mailbox were used.
+
+---
+
+# Rounds A and B: offline agent, MCP and one-command setup
+
+Run on 14 Oct 2026, after adding the offline agent, the MCP server and the setup
+scripts. Each round started from a fresh unzip of the release zip into an empty
+folder, exactly as a new user would.
+
+| Check | Round A · Windows PowerShell script | Round B · bash script (Git Bash) |
+|---|---|---|
+| One-command setup (venv, install, generate, verify, demo, report) | Passed, 176 s from an empty folder | Passed, 154 s |
+| Rule checks vs. answer key | All match (15,000) | All match (15,000), then again at 21,000 with seed 31 |
+| Demo + rerun | Rerun adds nothing | 1,831 drafts, 870 replies, 0 failures; rerun adds nothing |
+| `pytest` | 69 passed | 69 passed |
+| `sapkit eval --agent` (offline agent) | 20 / 20 | 20 / 20, on both datasets |
+| Offline `ask` in the terminal | Answers correctly | – |
+| **Real Claude, no API key**: Claude Code over the generated `.mcp.json` | Correct: 414 replies to review; biggest change at 2000 is 10007951, +40.5% (42 → 59) | Correct: 376 missing-ASN lines at plant 3000 |
+| Tool calls audited in `ops_audit_log` as `mcp:` | Yes | Yes |
+| Folder path too long for Windows | Clear message, nothing created | – |
+
+Found and fixed in these rounds:
+- **Long Windows paths.** A folder path too long for Windows made DuckDB's library
+  fail to load. The PowerShell script now checks the path first.
+- **Git Bash path form.** Under Git Bash, `.mcp.json` got a `/c/...` path that
+  Claude Code on Windows can't start. Claude still answered correctly, but by
+  reading the report CSV instead of calling the tool. The bash script now
+  converts the path with `cygpath`.
+
+Still not run: the Claude API agent (`sapkit ask` with `ANTHROPIC_API_KEY`) and
+`eval --live`. Claude itself has now been tested end to end through Claude Code
+and MCP.

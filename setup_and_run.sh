@@ -37,7 +37,10 @@ step "Writing the report"
 "$VPY" -m sapkit report
 
 # Let Claude Code use the tools when it is opened in this folder (no API key needed).
-printf '{"mcpServers": {"sapkit": {"command": "%s", "args": ["-m", "sapkit", "mcp"]}}}\n' "$(pwd)/$VPY" > .mcp.json
+PYPATH="$(pwd)/$VPY"
+# Git Bash on Windows: Claude Code needs C:/... rather than /c/...
+if command -v cygpath >/dev/null 2>&1; then PYPATH="$(cygpath -m "$PYPATH")"; fi
+printf '{"mcpServers": {"sapkit": {"command": "%s", "args": ["-m", "sapkit", "mcp"]}}}\n' "$PYPATH" > .mcp.json
 
 echo
 echo "Setup complete."
