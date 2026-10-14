@@ -110,11 +110,20 @@ def cmd_ask(args):
     questions = [args.question] if args.question else None
     if questions is None:
         print("Ask about shortages, forecast changes, outreach or replies. Empty line to quit.")
+    import anthropic
     while True:
         q = questions.pop(0) if questions else (input("> ") if questions is None else "")
         if not q:
             break
-        res = agent.ask(q)
+        try:
+            res = agent.ask(q)
+        except (anthropic.AuthenticationError, TypeError) as e:
+            if isinstance(e, TypeError) and "authentication" not in str(e).lower():
+                raise
+            print("No usable Anthropic credentials. Set ANTHROPIC_API_KEY (or run `ant auth login`) and try again.\n"
+                  "Everything except `ask` and `eval --live` works without a key: try `sapkit query`.",
+                  file=sys.stderr)
+            sys.exit(2)
         print(res.answer)
         if args.show_tools:
             print("\n[tools]", json.dumps(res.tool_calls))

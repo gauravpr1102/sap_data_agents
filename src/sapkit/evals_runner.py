@@ -154,7 +154,12 @@ def run_evals(cfg: ClientConfig, live: bool = False, limit: int = 0) -> int:
         from .agent import PlanningAgent
         agent = PlanningAgent(con, cfg, session)
         t0 = time.time()
-        res = agent.ask(c.question)
+        try:
+            res = agent.ask(c.question)
+        except Exception as e:  # missing credentials, network, rate limits: stop with a clear message
+            print(f"{c.id}: the Claude call failed ({type(e).__name__}: {e}). "
+                  "Live evals need ANTHROPIC_API_KEY or an `ant auth login` profile.")
+            return 2
         used = [t["tool"] for t in res.tool_calls]
         tool_ok = (not c.tools) or any(t in used for t in c.tools)
         low = res.answer.lower()
