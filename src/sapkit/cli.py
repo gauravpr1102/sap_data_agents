@@ -129,7 +129,11 @@ def cmd_ask(args):
               "Press Enter on an empty line to quit.\n")
     import anthropic
     while True:
-        q = questions.pop(0) if questions else (input("> ") if questions is None else "")
+        try:
+            q = questions.pop(0) if questions else (input("> ") if questions is None else "")
+        except (EOFError, KeyboardInterrupt):  # Ctrl+Z / Ctrl+D / Ctrl+C, or no terminal attached
+            print()
+            break
         if not q:
             break
         try:
