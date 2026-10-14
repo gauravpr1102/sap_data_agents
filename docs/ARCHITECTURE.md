@@ -24,6 +24,7 @@ tested against known answers.
                             │ question + user scope (allowed plants)
             ┌───────────────▼──────────────────────────────────────────┐
  Agent      │ agent.py   Claude API tool loop (claude-opus-5-5)        │
+            │ offline_agent.py  same tools, rule routing, no key       │
             │            system prompt = domain pack (domain/*.md)     │
             │ guard.py   blocks tables no tool produced this turn      │
             └───────────────┬──────────────────────────────────────────┘

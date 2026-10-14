@@ -1,6 +1,7 @@
 """Command line: `python -m sapkit <command>`.
 
-Every command except `ask` and `eval --live` runs without an API key.
+Every command runs without an API key. Only `ask` (with a key) and `eval --live`
+call Claude; without a key, `ask` uses the offline rule-based agent.
 """
 from __future__ import annotations
 
@@ -102,14 +103,30 @@ def cmd_replies(args):
     print(json.dumps(res, indent=2))
 
 
+def _has_credentials() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+
+
 def cmd_ask(args):
-    from .agent import PlanningAgent
     cfg = _cfg(args)
     con = db.connect(cfg)
-    agent = PlanningAgent(con, cfg, Session(user=args.user, allowed_plants=_plants(args, cfg)))
+    session = Session(user=args.user, allowed_plants=_plants(args, cfg))
+    offline = args.offline or not _has_credentials()
+    if offline:
+        from .offline_agent import OFFLINE_NOTE, OfflineAgent
+        agent = OfflineAgent(con, cfg, session)
+        if not args.offline:
+            print("No Anthropic API key found, so the agent is running in offline mode: same tools and data, "
+                  "simple rules instead of Claude.\n", file=sys.stderr)
+    else:
+        from .agent import PlanningAgent
+        agent = PlanningAgent(con, cfg, session)
     questions = [args.question] if args.question else None
     if questions is None:
-        print("Ask about shortages, forecast changes, outreach or replies. Empty line to quit.")
+        print(f"Planning assistant for {cfg.client_name}, plants {', '.join(session.allowed_plants)}"
+              f"{' ' + OFFLINE_NOTE if offline else ''}.")
+        print("Ask about shortages, late shipments, forecast changes, supplier outreach or replies. "
+              "Press Enter on an empty line to quit.\n")
     import anthropic
     while True:
         q = questions.pop(0) if questions else (input("> ") if questions is None else "")
@@ -120,11 +137,9 @@ def cmd_ask(args):
         except (anthropic.AuthenticationError, TypeError) as e:
             if isinstance(e, TypeError) and "authentication" not in str(e).lower():
                 raise
-            print("No usable Anthropic credentials. Set ANTHROPIC_API_KEY (or run `ant auth login`) and try again.\n"
-                  "Everything except `ask` and `eval --live` works without a key: try `sapkit query`.",
-                  file=sys.stderr)
+            print("No usable Anthropic credentials. Set ANTHROPIC_API_KEY, or run with --offline.", file=sys.stderr)
             sys.exit(2)
-        print(res.answer)
+        print(res.answer + ("\n" if questions is None else ""))
         if args.show_tools:
             print("\n[tools]", json.dumps(res.tool_calls))
         if questions is not None and not questions:
@@ -211,7 +226,7 @@ def cmd_demo(args):
 
 def cmd_eval(args):
     from .evals_runner import run_evals
-    sys.exit(run_evals(_cfg(args), live=args.live, limit=args.limit))
+    sys.exit(run_evals(_cfg(args), live=args.live, limit=args.limit, offline_agent=args.agent))
 
 
 VERIFY_CHECKS = {
@@ -285,8 +300,9 @@ def main(argv=None):
     r.add_argument("--offline", action="store_true", help="keyword classifier, no API key")
     r.set_defaults(func=cmd_replies)
 
-    a = sub.add_parser("ask", help="ask the Claude agent (needs ANTHROPIC_API_KEY)")
+    a = sub.add_parser("ask", help="ask the planning agent (Claude with a key, offline rules without)")
     a.add_argument("question", nargs="?")
+    a.add_argument("--offline", action="store_true", help="use the offline rule-based agent even if a key is set")
     a.add_argument("--plants")
     a.add_argument("--user", default="demo.planner")
     a.add_argument("--show-tools", action="store_true")
@@ -304,7 +320,8 @@ def main(argv=None):
     sub.add_parser("verify", help="check every rule against the answers built into the data").set_defaults(func=cmd_verify)
 
     e = sub.add_parser("eval", help="agent evaluation questions (tool-level offline, or --live with Claude)")
-    e.add_argument("--live", action="store_true")
+    e.add_argument("--live", action="store_true", help="ask the real Claude agent (needs a key)")
+    e.add_argument("--agent", action="store_true", help="ask the offline agent (no key needed)")
     e.add_argument("--limit", type=int, default=0)
     e.set_defaults(func=cmd_eval)
 

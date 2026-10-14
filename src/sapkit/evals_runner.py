@@ -128,7 +128,8 @@ def _prepare(cfg: ClientConfig):
     return con
 
 
-def run_evals(cfg: ClientConfig, live: bool = False, limit: int = 0) -> int:
+def run_evals(cfg: ClientConfig, live: bool = False, limit: int = 0, offline_agent: bool = False) -> int:
+    mode = "offline-agent" if offline_agent else ("live" if live else "offline")
     con = _prepare(cfg)
     cases = build_cases(con, cfg)
     if limit:
@@ -138,7 +139,7 @@ def run_evals(cfg: ClientConfig, live: bool = False, limit: int = 0) -> int:
     results = []
     for c in cases:
         session = Session(user="eval", allowed_plants=c.plants or list(cfg.plants))
-        if not live:
+        if mode == "offline":
             if not c.tools:
                 results.append({"id": c.id, "mode": "offline", "pass": True, "note": "no tool expected (live-only check)"})
                 continue
@@ -151,8 +152,12 @@ def run_evals(cfg: ClientConfig, live: bool = False, limit: int = 0) -> int:
             results.append({"id": c.id, "mode": "offline", "tool": c.tools[0], "pass": ok,
                             "question": c.question})
             continue
-        from .agent import PlanningAgent
-        agent = PlanningAgent(con, cfg, session)
+        if offline_agent:
+            from .offline_agent import OfflineAgent
+            agent = OfflineAgent(con, cfg, session)
+        else:
+            from .agent import PlanningAgent
+            agent = PlanningAgent(con, cfg, session)
         t0 = time.time()
         try:
             res = agent.ask(c.question)
@@ -165,14 +170,15 @@ def run_evals(cfg: ClientConfig, live: bool = False, limit: int = 0) -> int:
         low = res.answer.lower()
         fact_ok = all(any(alt.lower() in low for alt in group) for group in c.facts)
         forbidden_ok = not any(f.lower() in low for f in c.must_not_contain)
-        results.append({"id": c.id, "mode": "live", "pass": tool_ok and fact_ok and forbidden_ok,
+        results.append({"id": c.id, "mode": mode, "pass": tool_ok and fact_ok and forbidden_ok,
                         "tool_ok": tool_ok, "fact_ok": fact_ok, "forbidden_ok": forbidden_ok,
                         "tools_used": used, "question": c.question, "answer": res.answer,
                         "seconds": round(time.time() - t0, 1), "usage": res.usage})
     passed = sum(r["pass"] for r in results)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    (out_dir / f"evals-{'live' if live else 'offline'}-{stamp}.json").write_text(json.dumps(results, indent=2, default=str))
+    (out_dir / f"evals-{mode}-{stamp}.json").write_text(json.dumps(results, indent=2, default=str))
     for r in results:
         print(f"{r['id']}  {'PASS' if r['pass'] else 'FAIL'}  {r.get('question', r.get('note', ''))}")
-    print(f"\n{passed}/{len(results)} passed ({'live Claude agent' if live else 'offline tool layer'})")
+    label = {"offline-agent": "offline agent", "live": "live Claude agent", "offline": "offline tool layer"}[mode]
+    print(f"\n{passed}/{len(results)} passed ({label})")
     return 0 if passed == len(results) else 1

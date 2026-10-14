@@ -182,3 +182,31 @@ ignoring a plain `---` horizontal rule.
 1,300 supplier drafts and 650 supplier replies. That is enough volume to make
 ranking, row caps and reruns meaningful. It generates in about 10 seconds. The
 test suite uses its own smaller dataset (400 per plant) so it stays quick.
+
+## D21 · An offline agent, so the assistant can be used without an API key
+
+**Options.**
+- (a) Leave `ask` Claude-only.
+- (b) Run a local open-weight model.
+- (c) Route Claude through Vertex AI using Google credentials.
+- (d) A rule-based agent over the same tools.
+
+**Decision.** (d), as the default whenever no Anthropic credentials are present.
+It needs nothing installed beyond the kit, and it reuses the real tools, plant
+scope, grounding guard and audit log, so it exercises everything except the
+model's reasoning. It is deliberately simple:
+- Keyword and number matching picks the tool.
+- Fixed templates write the answer.
+- Anything it doesn't recognise gets a short help message, not a guess.
+
+It answers all 20 evaluation questions correctly (`sapkit eval --agent`). It is
+not a substitute for Claude: it can't follow up, combine tools or handle
+unusual phrasing. Option (c) remains a small, separate change.
+
+## D22 · One-command setup scripts
+
+`setup_and_run.ps1` (Windows) and `setup_and_run.sh` (macOS/Linux) create the
+environment, install, generate, verify, run the demo, write the report, and
+open the assistant. Each step stops the script with a clear message if it
+fails. `.gitattributes` keeps the shell script's line endings as LF, so it
+runs on a Mac even when committed from Windows.

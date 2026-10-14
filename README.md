@@ -19,25 +19,54 @@ calculates one. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 
 ## Quick start
 
+One command sets everything up and opens the planning assistant. No API key is needed.
+
+**Windows (PowerShell):**
+```
+powershell -ExecutionPolicy Bypass -File setup_and_run.ps1
+```
+
+**macOS / Linux:**
+```
+bash setup_and_run.sh
+```
+
+It creates a virtual environment, installs the kit, builds the dummy SAP data,
+checks every rule, runs the end-to-end demo and writes a report, then opens the
+assistant. Ask it things like:
+
+- What's short at plant 1000 this week?
+- Why is material 10000004 short?
+- Which purchase orders at plant 3000 should have shipped by now?
+- Which forecast changes at plant 2000 are the biggest?
+- How many supplier e-mails would go out for plant 1000?
+- Which supplier replies need my review?
+
+**Without a key, the assistant runs in offline mode.** It uses the same nine
+tools, the same data, the same plant-access rules and the same audit log, but
+picks the tool with simple rules instead of Claude. It answers all 20
+evaluation questions correctly, but it only understands planning questions phrased
+along those lines. With `ANTHROPIC_API_KEY` set, `ask` uses Claude instead.
+
+Step by step, if you prefer:
+
 ```bash
 pip install -e ".[dev]"
-
 python -m sapkit generate          # 15,000 material-plants of SAP-shaped data (~10 s)
 python -m sapkit verify            # every rule vs. the answers built into the data
-python -m sapkit demo --offline    # outreach -> replies -> rerun -> report, no API key needed
-python -m sapkit eval              # 20 planner questions against the tool layer
-python -m pytest                   # 54 tests
+python -m sapkit demo --offline    # outreach -> replies -> rerun -> report
+python -m sapkit ask               # the assistant (offline without a key)
+python -m sapkit eval --agent      # 20 planner questions through the offline agent
+python -m pytest                   # 67 tests
 ```
 
 With an Anthropic API key:
 
 ```bash
-export ANTHROPIC_API_KEY=...
+export ANTHROPIC_API_KEY=...       # PowerShell: $env:ANTHROPIC_API_KEY = "..."
 python -m sapkit ask "What's short at plant 1000 this week, and why?" --show-tools
-python -m sapkit ask                       # interactive
-python -m sapkit ask "..." --plants 1000   # a planner who can only see plant 1000
-python -m sapkit replies                   # classify replies with Claude instead of keywords
-python -m sapkit eval --live               # the 20 questions through the real agent
+python -m sapkit replies           # classify replies with Claude instead of keywords
+python -m sapkit eval --live       # the 20 questions through the real Claude agent
 ```
 
 ## Commands
@@ -51,8 +80,8 @@ python -m sapkit eval --live               # the 20 questions through the real a
 | `replies [--offline]` | Optional | Process supplier replies; Claude if a key is set, keywords otherwise |
 | `report` | No | Write `out/report/summary.md` and CSV exports |
 | `demo [--offline] [--regenerate]` | Optional | All of the above, end to end, including a rerun that must create nothing new |
-| `ask ["question"] [--plants] [--show-tools]` | **Yes** | The Claude planning agent |
-| `eval [--live]` | `--live` only | 20 evaluation questions |
+| `ask ["question"] [--plants] [--offline] [--show-tools]` | Optional | The planning assistant: Claude with a key, offline rules without |
+| `eval [--agent] [--live]` | `--live` only | 20 evaluation questions: tool layer, offline agent (`--agent`) or Claude (`--live`) |
 | `reset` | No | Clear drafts, mailbox state and ops tables |
 
 ### Example tool queries
@@ -79,6 +108,7 @@ src/sapkit/
   db.py               DuckDB connection, rule rendering, ops tables
   tools.py            the nine governed tools + strict schemas
   agent.py            Claude tool loop with grounding guard
+  offline_agent.py    rule-based agent over the same tools, for use without a key
   guard.py            blocks tables no tool produced
   outreach.py         eligibility + drafting
   replies.py          reply classification (Claude or offline) + safe persistence
