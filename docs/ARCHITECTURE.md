@@ -82,3 +82,31 @@ tested against known answers.
 - **No pricing in supplier emails**, enforced in the template code, not only in the prompt.
 
 See `docs/DECISIONS.md` for why each choice was made.
+
+## Three ways to reach the same tools
+
+| Front end | Model | Needs | Command |
+|---|---|---|---|
+| Claude API agent | Claude (`claude-opus-5-5`) | `ANTHROPIC_API_KEY` | `sapkit ask` |
+| Claude Code / Claude Desktop over MCP | Claude, on the user's own Claude login | Claude Code or Desktop installed | `claude` in the kit folder (setup writes `.mcp.json`) |
+| Offline agent | none: rules route the question | nothing | `sapkit ask` without a key |
+
+All three call the same nine tools, so plant scope, row caps, as-of dates and
+the audit log behave identically. Only the reasoning in front of the tools
+changes.
+
+## Mapping to the reference architecture
+
+The kit keeps the shape of the production reference build. Only the platform
+under each layer is lighter.
+
+| Reference build (production) | This kit | Same principle |
+|---|---|---|
+| SAP → BigQuery `sap_raw_data` (BODS, read-only) | SAP-shaped raw tables in DuckDB | SAP is the system of record; nothing writes back |
+| Curated views in `mm` | `sql/views.sql` (temp views from config) | Business rules live once, in reviewed SQL |
+| `ops` dataset (`agent_audit_log`, `vendor_comm_log`) | `ops_*` tables | Append-only audit; the only writes |
+| MCP Toolbox on Cloud Run, allow-listed toolsets | `tools.py`, served in-process and over MCP (`sapkit mcp`) | Agents only reach data through named, parameterised tools |
+| Agent Engine (ADK + Gemini) | Claude tool loop (`agent.py`), or Claude Code over MCP | The model handles language; tools establish facts |
+| Gemini Enterprise UI | CLI, Claude Code or Claude Desktop | Users ask in plain language |
+| Eval gate (≥30 scenarios, 95%) | `sapkit eval` (20 questions) + 67 tests + `verify` | Nothing ships without passing known answers |
+| Buyer approves every send; Gmail drafts | Mock mailbox drafts; buyer sends | No autonomous sending |

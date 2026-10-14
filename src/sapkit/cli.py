@@ -224,6 +224,13 @@ def cmd_demo(args):
     cmd_report(args)
 
 
+def cmd_mcp(args):
+    from .mcp_server import main as mcp_main
+    if args.plants:
+        os.environ["SAPKIT_PLANTS"] = args.plants
+    mcp_main(args.config)
+
+
 def cmd_eval(args):
     from .evals_runner import run_evals
     sys.exit(run_evals(_cfg(args), live=args.live, limit=args.limit, offline_agent=args.agent))
@@ -316,6 +323,10 @@ def main(argv=None):
     d.add_argument("--materials", type=int, default=5000)
     d.add_argument("--seed", type=int, default=2026)
     d.set_defaults(func=cmd_demo)
+
+    m = sub.add_parser("mcp", help="serve the nine tools over MCP (stdio) for Claude Code / Claude Desktop")
+    m.add_argument("--plants")
+    m.set_defaults(func=cmd_mcp)
 
     sub.add_parser("verify", help="check every rule against the answers built into the data").set_defaults(func=cmd_verify)
 

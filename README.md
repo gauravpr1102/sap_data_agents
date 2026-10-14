@@ -48,6 +48,11 @@ picks the tool with simple rules instead of Claude. It answers all 20
 evaluation questions correctly, but it only understands planning questions phrased
 along those lines. With `ANTHROPIC_API_KEY` set, `ask` uses Claude instead.
 
+**To use real Claude without an API key:** if you have Claude Code, run `claude`
+in this folder after setup and approve the `sapkit` tools when asked. Claude then
+answers from the same tools using your own Claude login. (Claude Desktop works
+the same way: add the server from `.mcp.json` to its config.)
+
 Step by step, if you prefer:
 
 ```bash
@@ -57,7 +62,7 @@ python -m sapkit verify            # every rule vs. the answers built into the d
 python -m sapkit demo --offline    # outreach -> replies -> rerun -> report
 python -m sapkit ask               # the assistant (offline without a key)
 python -m sapkit eval --agent      # 20 planner questions through the offline agent
-python -m pytest                   # 67 tests
+python -m pytest                   # 69 tests
 ```
 
 With an Anthropic API key:
@@ -82,6 +87,7 @@ python -m sapkit eval --live       # the 20 questions through the real Claude ag
 | `demo [--offline] [--regenerate]` | Optional | All of the above, end to end, including a rerun that must create nothing new |
 | `ask ["question"] [--plants] [--offline] [--show-tools]` | Optional | The planning assistant: Claude with a key, offline rules without |
 | `eval [--agent] [--live]` | `--live` only | 20 evaluation questions: tool layer, offline agent (`--agent`) or Claude (`--live`) |
+| `mcp [--plants]` | No | Serve the nine tools over MCP for Claude Code / Claude Desktop |
 | `reset` | No | Clear drafts, mailbox state and ops tables |
 
 ### Example tool queries
@@ -109,6 +115,7 @@ src/sapkit/
   tools.py            the nine governed tools + strict schemas
   agent.py            Claude tool loop with grounding guard
   offline_agent.py    rule-based agent over the same tools, for use without a key
+  mcp_server.py       the same tools over MCP (like the reference build's MCP Toolbox)
   guard.py            blocks tables no tool produced
   outreach.py         eligibility + drafting
   replies.py          reply classification (Claude or offline) + safe persistence

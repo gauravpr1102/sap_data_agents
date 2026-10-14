@@ -8,6 +8,7 @@ dependencies = [
   "duckdb>=1.1",
   "pandas>=2",          # DuckDB probes for pandas on every parameterised query; without it each probe is a slow failed import
   "pyyaml>=6",
+  "mcp>=2.3,<3",        # serves the tools to Claude Code / Claude Desktop
 ]
 
 [project.optional-dependencies]

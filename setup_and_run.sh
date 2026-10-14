@@ -36,11 +36,15 @@ step "Running the end-to-end demo (outreach, replies, rerun)"
 step "Writing the report"
 "$VPY" -m sapkit report
 
+# Let Claude Code use the tools when it is opened in this folder (no API key needed).
+printf '{"mcpServers": {"sapkit": {"command": "%s", "args": ["-m", "sapkit", "mcp"]}}}\n' "$(pwd)/$VPY" > .mcp.json
+
 echo
 echo "Setup complete."
 echo "  Supplier drafts:  out/drafts/"
 echo "  Report:           out/report/summary.md"
 echo "  Run the tests:    $VPY -m pytest"
+echo "  Use real Claude:  run 'claude' in this folder and approve the 'sapkit' tools"
 
 if [ "${1:-}" != "--no-chat" ]; then
   echo

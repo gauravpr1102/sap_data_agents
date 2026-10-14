@@ -1,6 +1,7 @@
 """DuckDB connection, rule rendering from config, and the ops (write) tables."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
@@ -119,7 +120,8 @@ def render_rules(cfg: ClientConfig, con: duckdb.DuckDBPyConnection) -> str:
 
 
 def connect(cfg: ClientConfig, db_path: str | Path | None = None, read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    path = Path(db_path) if db_path else ROOT / "data" / f"{cfg.client_id}.duckdb"
+    # SAPKIT_DB lets a separate process (the MCP server, a test) point at another copy.
+    path = Path(db_path or os.environ.get("SAPKIT_DB") or ROOT / "data" / f"{cfg.client_id}.duckdb")
     if not path.exists():
         raise FileNotFoundError(f"{path} not found. Run `sapkit generate` first.")
     con = duckdb.connect(str(path), read_only=read_only)

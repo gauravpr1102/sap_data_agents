@@ -210,3 +210,27 @@ environment, install, generate, verify, run the demo, write the report, and
 open the assistant. Each step stops the script with a clear message if it
 fails. `.gitattributes` keeps the shell script's line endings as LF, so it
 runs on a Mac even when committed from Windows.
+
+## D23 · Serve the tools over MCP too
+
+The reference build puts its tools behind MCP Toolbox, and every agent reaches data
+through it. The kit does the same: `sapkit mcp` serves the same nine tools over
+stdio MCP, with the domain packs as server instructions. That gives the
+architecture its proper tool layer. It also gives a way to use real Claude
+without an API key: Claude Code or Claude Desktop, on the user's own Claude
+login, connects to the server. The setup scripts write a project `.mcp.json`
+pointing at the kit's Python, so opening Claude Code in the folder is enough.
+
+Details:
+- **No file lock.** Each MCP call opens and closes its own DuckDB connection, so a
+  running Claude session never locks out the other `sapkit` commands.
+- **Clear refusals.** A refusal is raised as the SDK's `ToolError`, so the client
+  sees the reason ("You do not have access to plant 2000"), not a generic failure.
+- **Scope from the environment.** Plant scope comes from `SAPKIT_PLANTS`, never
+  from the model.
+- **Library version.** The MCP Python SDK is pinned to 2.x (`MCPServer`), whose API
+  differs from 1.x (`FastMCP`).
+
+Checked live: Claude Code (`claude -p` with only this server allowed) answered
+"what's short at plant 1000 this week, and why?" from the tools, with no API
+key. Every figure in its answer matched the data.
