@@ -1,0 +1,66 @@
+# Client configuration for the dummy SAP client.
+#
+# Everything that changes from one SAP client to the next lives in a file like
+# this one. The SQL, the tools and the agent read their values from here; none
+# of them hard-code a client rule. Copy this file to onboard a new client.
+
+client:
+  id: acme
+  name: Acme Precision Manufacturing (dummy client)
+  timezone: America/Chicago
+
+# The "today" the data is built around. Fixed so every run and every test sees
+# the same answers. In production this is the date of the SAP extract.
+as_of_date: "2026-10-14"
+
+plants:
+  "1000": Riverside Assembly
+  "2000": Lakeside Machining
+  "3000": Hillview Distribution Center
+
+# Which material-plants are in scope at all (SAP MARC fields).
+scope:
+  procurement_types: ["F"]          # MARC-BESKZ: externally procured only
+  exclude_mrp_types: ["ND"]         # MARC-DISMM: no-MRP materials are out
+  active_statuses: ["", "10", "20"] # MARC-MMSTA: plant-specific status allowed
+  horizon_days: 105                 # 15-week planning horizon
+
+# What counts as supply when projecting the balance.
+#   asn_only : on-hand stock + open PO lines that carry a shipping notification
+#   all_open : on-hand stock + every open PO schedule line (classic MRP view)
+cover_rule: asn_only
+
+asn:
+  required_confirmation_key: "Z001" # EKPO-BSTAE value that requires an ASN
+  default_transit_days: 10          # used when a supplier lane has no transit time
+  lookback_days: 30                 # ignore ancient missing-ASN lines
+
+risk:
+  # Urgency multipliers by days until the first short date.
+  urgency_bands:
+    - {max_days: 7, factor: 3}
+    - {max_days: 21, factor: 2}
+    - {max_days: 9999, factor: 1}
+
+forecast:
+  # Snapshot pair to compare. "latest" picks the two most recent captures.
+  capture_pair: latest
+  change_threshold_high_pct: 15
+  change_threshold_low_pct: 5
+  # Ranks that qualify for a supplier draft. The rest are report-only.
+  draftable_ranks: [1, 2, 3]
+
+outreach:
+  excluded_material_groups: ["MRO"]       # MARA-MATKL values never contacted
+  interplant_vendors:                     # vendor accounts that are our own plants
+    P1000: "1000"
+    P2000: "2000"
+    P3000: "3000"
+  template_version: "v1"
+  sourcing_inbox: sourcing@acme-dummy.example
+  include_pricing: false                  # never put prices in supplier emails
+
+replies:
+  # Model used for reply classification and the chat agent.
+  model: claude-opus-5-5
+  effort: medium
