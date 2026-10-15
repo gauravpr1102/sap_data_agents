@@ -16,7 +16,7 @@ def call_api(prompt, options, context):
     user = vars_.get("user", "morgan.manager@acme-dummy.example")
     runner = os.environ.get("PROMPTFOO_SAPKIT_RUNNER", "offline")
     obs = RUNNERS[runner](load_config(), user, prompt)
-    if obs.error and not obs.answer:
+    if obs.error:  # includes "usage limit reached": an error, never a pass
         return {"error": obs.error}
     return {"output": obs.answer, "metadata": {"tools": obs.tools, "blocked": obs.blocked,
                                                "guardrail": obs.guardrail, "tool_errors": obs.tool_errors}}

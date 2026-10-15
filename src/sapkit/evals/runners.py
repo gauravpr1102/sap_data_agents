@@ -137,6 +137,9 @@ def run_claude_code(cfg: ClientConfig, user: str, question: str, timeout: int = 
                 obs.error = ev.get("subtype", "error")
     if not obs.answer and out.returncode != 0:
         obs.error = obs.error or out.stderr[:300]
+    if any(s in (obs.answer or "").lower() for s in ("hit your session limit", "usage limit", "rate limit reached")):
+        # Claude didn't run: a limit message must never be scored (it could "pass" a no-leak check).
+        obs.error = "Claude usage limit reached; case not run"
     if obs.mcp_status and obs.mcp_status != "connected":
         # The tools weren't available, so the answer says nothing about the agent: report it, don't score it.
         obs.error = f"MCP server not connected ({obs.mcp_status})"
