@@ -96,6 +96,8 @@ def build(cfg: ClientConfig, cases: list[dict]) -> list[dict]:
             continue
         groups = []
         for g in c.get("facts") or []:
+            # "@decline" stands for every wording metrics.REFUSAL_PHRASES accepts as declining.
+            g = [y for x in g for y in (m.REFUSAL_PHRASES if x == "@decline" else [x])]
             alts = [a for a in (_fill(x, uf) for x in g) if a]
             if alts:
                 groups.append(alts)

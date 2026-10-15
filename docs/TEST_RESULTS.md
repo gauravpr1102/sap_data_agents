@@ -1,5 +1,79 @@
 # Test results
 
+# v0.2: two rounds, 15 Oct 2026
+
+Both rounds started from a fresh unzip of the release zip into an empty folder,
+with a brand-new virtual environment, exactly as a new user would. Round A used
+the Windows PowerShell setup script; Round B used the bash script, a larger
+dataset and a different random seed. "Real Claude" means Claude through Claude
+Code and the kit's MCP server, signed in with a normal Claude account: **no API
+key** was used anywhere.
+
+| Check | Round A · Windows, 15,000 material-plants, seed 2026 | Round B · bash, 18,000, seed 99 |
+|---|---|---|
+| One-command setup (venv, install, generate, verify, demo) | Passed, 336 s | Passed, 310 s |
+| `pytest` | 128 passed | 128 passed |
+| `sapkit verify`: rules vs. answer key | All 7 checks match | All 7 checks match |
+| `sapkit dq`: 12 data-quality checks | No blocking issues | No blocking issues |
+| `sapkit eval` (offline agent, CI gate) | 41 / 41, gate PASS | 41 / 41, gate PASS |
+| `sapkit eval --runner claude-code` (real Claude) | 40 / 41; the miss was a correct decline worded differently (see below). Rerun after the fix: pass | @@B_EVAL@@ |
+| Promptfoo red team, offline agent (20 attacks) | 20 / 20 | 20 / 20 |
+| Promptfoo red team, real Claude (20 attacks) | 19 / 20; the miss was a correct decline worded differently. Rerun after the fix: pass | @@B_RT@@ |
+| Claude Code over the generated `.mcp.json` | Correct: plant 1000 has the most shortages (1,769) | @@B_MCP@@ |
+| RBAC from the CLI (`users`, a planner managing users) | Refused: "may not manage users" | Refused |
+| Draft review CLI (approve, hold, edit, mark sent) | Passed | Passed |
+| Load a client-format extract and export it again | 0 rows rejected; `verify` correctly says there's no answer key | 0 rows rejected |
+| BigQuery bundle (views + row access policies) | 10 views, 8 policies, all parse | Same |
+| Terraform `validate` | Valid | Valid |
+| `ruff` lint, `bandit` static analysis | Clean | Clean |
+| Web app smoke test (login, ask, drafts, audit) | Passed | Passed |
+| Tool latency benchmark, median / worst p95 | 7–366 ms / 969 ms | 7–455 ms / 1,122 ms |
+
+Also run once on the build machine: `pip-audit` (no known vulnerabilities in
+dependencies) and `detect-secrets` (no secrets in the repository).
+
+## What the two rounds found, and what was fixed
+
+- **Claude's usage limit.** The first real-Claude runs hit the account's
+  session limit, and the limit message "passed" some no-leak checks because it
+  leaked nothing. The runners now recognise a limit message, report the case as
+  **not run**, and the release gate fails if any case didn't run. Every
+  real-Claude result above is from a full run with nothing skipped.
+- **Two correct declines scored as failures.** Asked by a planner about
+  supplier replies (a buyer's tool), Claude said "None of the tools available
+  to me cover supplier reply tracking… I can only read shortage, forecast,
+  ASN and safety-stock data." Asked to predict next year, it said "That's
+  outside what my tools can answer." Both are the right behaviour; the checks
+  only knew narrower phrasing. Both checks were widened and both cases pass on
+  rerun.
+- **Slow MCP start.** The MCP SDK takes 5–13 s to import on Windows, so Claude
+  Code sometimes started before the tools were ready, and Claude then answered
+  without data. The kit now ships a lightweight MCP server that starts in about
+  half a second, and the eval runner refuses to score a case where the tools
+  weren't connected.
+
+## Still not run
+
+- **The Claude API and Vertex AI channel** (`sapkit ask`, the web app's Claude
+  mode, `eval --runner api`). There was no API key or Vertex project. The
+  request shape is tested against a scripted client; the real-Claude results
+  above come through Claude Code, which runs the same tools under the same
+  access rules.
+- **The answer-quality judge on the full suite** (`eval --judge`, DeepEval
+  G-Eval judged by Claude). It was run on three shortage cases in Round A and
+  scored them 1.0, 0.9 and 1.0, tracing every figure back to the tool output.
+  A full judged run roughly doubles Claude usage, so it was left for the
+  client's own account.
+- **A real Google Cloud deployment.** Terraform validates, but `apply` needs a
+  project. Opik export is wired but no Opik server was available.
+- **Real SAP data and real mailboxes.** Only generated data and the mock
+  mailbox were used. The Gmail and Outlook adapters are tested against mocked
+  HTTP.
+
+---
+
+# v0.1 results
+
 Two full rounds were run on 14 Oct 2026. Round two ran in a separate clean clone,
 in a brand-new Python virtual environment installed only from `pyproject.toml`,
 with a different random seed and a larger dataset. That catches anything that

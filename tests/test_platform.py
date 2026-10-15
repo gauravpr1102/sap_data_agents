@@ -209,6 +209,23 @@ def test_eval_suite_offline_gate_passes(workdir, cfg, monkeypatch):
     assert res["scored"] >= 40 and res["by_category"]["security"].split("/")[0] == res["by_category"]["security"].split("/")[1]
 
 
+def test_real_claude_declines_are_recognised():
+    # Correct declines real Claude gave in the v0.2 rounds; each was once mis-scored as a failure.
+    from deepeval.test_case import LLMTestCase
+
+    from sapkit.evals import metrics as m
+    group = list(m.REFUSAL_PHRASES)
+    for answer in ("None of my available tools cover supplier replies or outreach tracking.",
+                   "That's outside what my tools can answer. My shortage tools cover a 105-day horizon.",
+                   "None of the tools available to me cover supplier reply tracking."):
+        tc = LLMTestCase(input="q", actual_output=answer,
+                         metadata={"fact_groups": [group], "outcome": "refused", "must_not": []})
+        for M in (m.FactsStated, m.ExpectedOutcome):
+            metric = M()
+            metric.measure(tc)
+            assert metric.is_successful(), (answer, metric.reason)
+
+
 # ------------------------------------------------------------------ hardening extras
 def test_traces_redact_card_and_id_numbers(con, cfg):
     from sapkit.offline_agent import OfflineAgent

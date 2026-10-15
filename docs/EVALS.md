@@ -31,6 +31,13 @@ Deterministic metrics, which run anywhere with no key:
 | No forbidden content | Nothing the user mustn't see appears |
 | Expected outcome | "refused" cases are declined; "answered" cases aren't blocked; "either" accepts both (used where declining and answering within scope are both correct) |
 
+Real Claude declines in many wordings ("I can't…", "None of my tools cover…",
+"That's outside what my tools can answer"). One list, `REFUSAL_PHRASES` in
+`metrics.py`, holds every accepted wording; a case's fact group can use
+`"@decline"` to mean all of them. Whenever a correct decline is mis-scored, add
+its wording there and a regression test (`tests/test_platform.py`). The leak
+checks (`must_not`) are separate, so widening this list never lets data through.
+
 **Answer quality** (`--judge`) is DeepEval's **G-Eval**, scored by Claude:
 - Does the first sentence answer the question?
 - Is every number in the answer backed by the tool results?
