@@ -207,3 +207,35 @@ def test_eval_suite_offline_gate_passes(workdir, cfg, monkeypatch):
     res = run(cfg, runner="offline")
     assert res["gate"] == "PASS", [r for r in res["results"] if not r["pass"]]
     assert res["scored"] >= 40 and res["by_category"]["security"].split("/")[0] == res["by_category"]["security"].split("/")[1]
+
+
+# ------------------------------------------------------------------ hardening extras
+def test_traces_redact_card_and_id_numbers(con, cfg):
+    from sapkit.offline_agent import OfflineAgent
+    s = load_rbac().session_for("morgan.manager@acme-dummy.example", cfg)
+    OfflineAgent(con, cfg, s).ask("my card is 4111 1111 1111 1111, ssn 123-45-6789")
+    q = con.execute("SELECT question FROM ops_trace ORDER BY created_at DESC LIMIT 1").fetchone()[0]
+    assert "4111" not in q and "123-45-6789" not in q and "removed" in q
+
+
+def test_web_rate_limit_and_conversation_reset(client, monkeypatch):
+    import sapkit.web as web
+    monkeypatch.setattr(web, "RATE_LIMIT_PER_MINUTE", 3)
+    client.post("/login", data={"user": "jordan.planner@acme-dummy.example"})
+    codes = [client.post("/api/ask", json={"question": "which plant has the most shortages?"}).status_code
+             for _ in range(4)]
+    assert codes[:3] == [200, 200, 200] and codes[3] == 429
+    assert client.post("/api/conversation/reset").json()["status"] == "new conversation"
+
+
+def test_retention_and_bench_commands(workdir, monkeypatch, capsys):
+    from sapkit.cli import main
+    monkeypatch.setenv("SAPKIT_DB", str(workdir / "db.duckdb"))
+    main(["retention", "--dry-run", "--user", "admin@acme-dummy.example"])
+    assert "Would delete" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as e:
+        main(["retention", "--user", "jordan.planner@acme-dummy.example"])
+    assert e.value.code == 3
+    main(["bench", "--runs", "2", "--user", "jordan.planner@acme-dummy.example"])
+    out = capsys.readouterr().out
+    assert "get_shortage_queue" in out and "get_supplier_replies" not in out  # only the role's tools

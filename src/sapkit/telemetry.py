@@ -29,6 +29,13 @@ PRICES = {
 }
 
 
+def redact(text: str) -> str:
+    """Remove card and ID numbers before a question is stored (blocked questions are traced too)."""
+    import re
+    text = re.sub(r"\b(?:\d[ -]?){13,16}\b", "[card number removed]", text or "")
+    return re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "[id number removed]", text)
+
+
 def estimate_cost(model: str, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0) -> float:
     p = PRICES.get(model)
     if p is None:
@@ -68,7 +75,7 @@ class Trace:
         latency_ms = int((time.time() - self.started) * 1000)
         row = {
             "trace_id": self.trace_id, "user": self.user, "channel": self.channel,
-            "question": self.question[:500], "latency_ms": latency_ms, "outcome": self.outcome,
+            "question": redact(self.question)[:500], "latency_ms": latency_ms, "outcome": self.outcome,
             "guardrail": self.guardrail, "tool_calls": len(self.tools),
             "tools": json.dumps([t.get("tool") for t in self.tools]),
             "model": self.model, "model_calls": self.model_calls,

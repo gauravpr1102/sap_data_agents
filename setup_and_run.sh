@@ -24,7 +24,7 @@ if [ ! -d .venv ]; then
 fi
 if [ -x .venv/bin/python ]; then VPY=.venv/bin/python; else VPY=.venv/Scripts/python; fi
 
-step "Installing the kit (first time takes a minute)"
+step "Installing the kit (first time takes 5-10 minutes)"
 "$VPY" -m pip install --quiet --disable-pip-version-check -e ".[dev]"
 step "Building the dummy SAP data"
 "$VPY" -m sapkit generate

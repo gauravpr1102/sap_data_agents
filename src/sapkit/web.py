@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html
 import os
+import time
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -26,6 +27,8 @@ from .config import load_config
 from .rbac import AccessDenied, Session, load_rbac
 
 COOKIE = "sapkit_user"
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("SAPKIT_RATE_LIMIT", "30"))
+MAX_HISTORY_MESSAGES = 40  # Claude turns kept per user for follow-up questions
 
 
 class AskIn(BaseModel):
@@ -114,24 +117,40 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 "tools": sorted(s.tools) if s.tools is not None else "all",
                 "actions": sorted(s.actions) if s.actions is not None else "all"}
 
+    conversations: dict[str, list] = {}   # user -> Claude message history (follow-up questions)
+    recent: dict[str, list[float]] = {}   # user -> request times (rate limit)
+
     @app.post("/api/ask")
     def ask(body: AskIn, s: Session = Depends(current_session)):
+        now = time.time()
+        window = [t for t in recent.get(s.user, []) if now - t < 60]
+        if len(window) >= RATE_LIMIT_PER_MINUTE:
+            raise HTTPException(429, f"Too many questions: at most {RATE_LIMIT_PER_MINUTE} a minute.")
+        recent[s.user] = window + [now]
         con = db.connect(cfg, session=s)
         try:
             st = llm.settings(cfg)
             if llm.has_credentials(st) and os.environ.get("SAPKIT_FORCE_OFFLINE") != "1":
                 from .agent import PlanningAgent
                 agent = PlanningAgent(con, cfg, s)
+                agent.history = conversations.get(s.user, [])[-MAX_HISTORY_MESSAGES:]
                 mode = "claude"
             else:
                 from .offline_agent import OfflineAgent
                 agent = OfflineAgent(con, cfg, s)
                 mode = "offline"
             res = agent.ask(body.question)
+            if mode == "claude":
+                conversations[s.user] = agent.history
         finally:
             con.close()
         return {"answer": res.answer, "mode": mode, "tools": res.tool_calls, "blocked": res.blocked,
                 "guardrail": res.guardrail, "trace_id": res.trace_id}
+
+    @app.post("/api/conversation/reset")
+    def reset_conversation(s: Session = Depends(current_session)):
+        conversations.pop(s.user, None)
+        return {"status": "new conversation"}
 
     @app.get("/api/drafts")
     def drafts(status: str = "PENDING_REVIEW", s: Session = Depends(current_session)):
@@ -224,6 +243,7 @@ def _home_html(cfg, s: Session) -> str:
       <h3>Ask</h3>
       <textarea id="q" rows="2" placeholder="e.g. What's short at plant {html.escape(s.allowed_plants[0])} this week?"></textarea>
       <button onclick="ask()">Ask</button>
+      <button class="secondary" onclick="fetch('/api/conversation/reset', {{method:'POST'}}).then(() => {{ document.getElementById('answer').textContent = 'New conversation started.'; }})">New conversation</button>
       <div id="answer" class="muted" style="margin-top:12px">Answers use only the data you're allowed to see.</div>
     </div>
     {drafts_card}

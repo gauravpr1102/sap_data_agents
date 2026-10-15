@@ -69,3 +69,7 @@ llm:
   effort: medium
   vertex_project: null        # e.g. my-gcp-project (or SAPKIT_VERTEX_PROJECT)
   vertex_region: global
+
+retention:
+  trace_days: 90     # per-question traces (questions are redacted of card/ID numbers)
+  audit_days: 2555   # audit log: 7 years

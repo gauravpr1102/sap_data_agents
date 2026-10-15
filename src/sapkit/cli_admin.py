@@ -190,6 +190,61 @@ def cmd_metrics(args):
         con.close()
 
 
+def cmd_retention(args):
+    """Delete traces older than the retention period; the audit log is kept for its own (longer) period."""
+    cfg, s = _ctx(args)
+    _need(s, "manage_data")
+    trace_days = int(cfg.get("retention", "trace_days", default=90))
+    audit_days = int(cfg.get("retention", "audit_days", default=2555))
+    con = db.connect(cfg)
+    try:
+        t = con.execute("SELECT count(*) FROM ops_trace WHERE created_at < now() - to_days(?)", [trace_days]).fetchone()[0]
+        a = con.execute("SELECT count(*) FROM ops_audit_log WHERE event_at < now() - to_days(?)", [audit_days]).fetchone()[0]
+        if not args.dry_run:
+            con.execute("DELETE FROM ops_trace WHERE created_at < now() - to_days(?)", [trace_days])
+            con.execute("DELETE FROM ops_audit_log WHERE event_at < now() - to_days(?)", [audit_days])
+            _audit(con, s.user, "retention_applied", "ops", {"traces_deleted": t, "audit_deleted": a,
+                                                              "trace_days": trace_days, "audit_days": audit_days})
+    finally:
+        con.close()
+    verb = "Would delete" if args.dry_run else "Deleted"
+    print(f"{verb} {t:,} traces older than {trace_days} days and {a:,} audit events older than {audit_days} days.")
+
+
+def cmd_bench(args):
+    """Latency of every tool the user may call, over N runs (no model involved)."""
+    import statistics
+    import time as _t
+
+    from .tools import Toolbox, tool_definitions
+    cfg, s = _ctx(args)
+    con = db.connect(cfg, session=s)
+    plant = s.allowed_plants[0]
+    mat = con.execute("SELECT matnr FROM v_shortage LIMIT 1").fetchone()
+    vendor = con.execute("SELECT min(vendor) FROM v_supplier_candidates WHERE vendor IS NOT NULL").fetchone()
+    sample = {"get_shortage_summary": {}, "get_shortage_queue": {"plant": plant, "within_days": 7, "limit": 10},
+              "get_shortage_detail": {"material": (mat or [""])[0], "plant": plant},
+              "get_missing_asn": {"plant": plant, "limit": 10}, "get_safety_stock_dips": {"plant": plant, "limit": 10},
+              "get_forecast_changes": {"plant": plant, "ranks": [1], "limit": 10}, "get_outreach_status": {"plant": plant},
+              "preview_supplier_email": {"vendor": (vendor or [""])[0] or ""},
+              "get_supplier_replies": {"vendor": "", "category": "", "needs_review_only": False},
+              "get_drafts_for_review": {"status": "PENDING_REVIEW", "limit": 10}}
+    tb = Toolbox(con, cfg, s, channel="bench")
+    print(f"{'tool':<26}{'p50 ms':>9}{'p95 ms':>9}{'max ms':>9}")
+    try:
+        for t in tool_definitions(cfg, s):
+            times = []
+            for _ in range(args.runs):
+                t0 = _t.perf_counter()
+                tb.run(t["name"], sample[t["name"]])
+                times.append((_t.perf_counter() - t0) * 1000)
+            times.sort()
+            p95 = times[min(len(times) - 1, int(len(times) * 0.95))]
+            print(f"{t['name']:<26}{statistics.median(times):>9.0f}{p95:>9.0f}{times[-1]:>9.0f}")
+    finally:
+        con.close()
+
+
 def cmd_web(args):
     import uvicorn
     print(f"Planning assistant on http://{args.host}:{args.port}  (auth: dev login; set SAPKIT_AUTH=iap behind IAP)")
@@ -253,4 +308,12 @@ def register(sub):
     w.set_defaults(func=cmd_web)
 
     sub.add_parser("version", help="print the version").set_defaults(func=cmd_version)
-    return [u, d, f, ld, ex, b, a, sub.choices["dq"], sub.choices["metrics"]]
+
+    rt = sub.add_parser("retention", help="delete traces and audit events past their retention period")
+    rt.add_argument("--dry-run", action="store_true")
+    rt.set_defaults(func=cmd_retention)
+
+    bn = sub.add_parser("bench", help="tool latency p50/p95 for the acting user")
+    bn.add_argument("--runs", type=int, default=20)
+    bn.set_defaults(func=cmd_bench)
+    return [u, d, f, ld, ex, b, a, rt, bn, sub.choices["dq"], sub.choices["metrics"]]

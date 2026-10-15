@@ -41,7 +41,7 @@ $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
     Step "Creating a virtual environment" { python -m venv .venv }
 }
-Step "Installing the kit (first time takes a minute)" { & $venvPy -m pip install --quiet --disable-pip-version-check -e ".[dev]" }
+Step "Installing the kit (first time takes 5-10 minutes)" { & $venvPy -m pip install --quiet --disable-pip-version-check -e ".[dev]" }
 Step "Building the dummy SAP data" { & $venvPy -m sapkit generate }
 Step "Checking every rule against the built-in answers" { & $venvPy -m sapkit verify }
 New-Item -ItemType Directory -Force out | Out-Null
