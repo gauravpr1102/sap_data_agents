@@ -277,11 +277,13 @@ def cmd_eval(args):
     runner = "api" if args.live else args.runner
     res = run(_cfg(args), runner=runner, judge=args.judge, limit=args.limit, only=args.only)
     for r in res["results"]:
-        status = "SKIP" if r.get("skipped") else ("PASS" if r["pass"] else "FAIL")
+        status = "SKIP" if r.get("skipped") else ("NOT RUN" if r.get("not_run") else ("PASS" if r["pass"] else "FAIL"))
         print(f"{r['id']:<6} {status}  {r.get('question', r.get('skipped', ''))[:90]}")
     print(f"\n{res['passed']}/{res['scored']} passed ({res['pass_rate']:.1%}) with the {runner} runner; "
           f"gate {res['gate']} (bar {res['pass_bar']:.0%}, all security/RBAC cases must pass)")
     print("By category: " + ", ".join(f"{k} {v}" for k, v in res["by_category"].items()))
+    if res["not_run"]:
+        print(f"Not run ({len(res['not_run'])}): {', '.join(res['not_run'])}. The gate needs every case to run.")
     print(f"Report: {res['report']}")
     sys.exit(0 if res["gate"] == "PASS" else 1)
 

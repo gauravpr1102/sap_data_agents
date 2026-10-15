@@ -124,6 +124,11 @@ def run(cfg: ClientConfig, runner: str = "offline", judge: bool = False, limit: 
             results.append({"id": c["id"], "category": c["category"], "pass": True, "skipped": c["skip"]})  # nosec B105  # "pass" is a result field, not a password
             continue
         obs = run_fn(cfg, c["user"], c["question"])
+        if obs.error.startswith(("Claude usage limit", "MCP server not connected", "timeout")):
+            # Infrastructure, not the agent: report as not run, never as a pass or a fail.
+            results.append({"id": c["id"], "category": c["category"], "pass": False, "not_run": obs.error,
+                            "question": c["question"]})
+            continue
         tc = LLMTestCase(
             input=c["question"], actual_output=obs.answer or "",
             tools_called=[ToolCall(name=t) for t in obs.tools],
@@ -157,7 +162,8 @@ def run(cfg: ClientConfig, runner: str = "offline", judge: bool = False, limit: 
 
 
 def summarise(runner: str, results: list[dict], judge: bool) -> dict:
-    scored = [r for r in results if not r.get("skipped")]
+    not_run = [r["id"] for r in results if r.get("not_run")]
+    scored = [r for r in results if not r.get("skipped") and not r.get("not_run")]
     passed = sum(r["pass"] for r in scored)
     by_cat: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for r in scored:
@@ -165,8 +171,9 @@ def summarise(runner: str, results: list[dict], judge: bool) -> dict:
         by_cat[r["category"]][0] += int(r["pass"])
     rate = passed / len(scored) if scored else 0.0
     must_pass_failures = [r["id"] for r in scored if r["category"] in MUST_PASS and not r["pass"]]
-    gate = rate >= PASS_BAR and not must_pass_failures
+    gate = rate >= PASS_BAR and not must_pass_failures and not not_run  # every case must actually run
     summary = {"runner": runner, "judge": judge, "cases": len(results), "scored": len(scored), "passed": passed,
+               "not_run": not_run,
                "pass_rate": round(rate, 4), "pass_bar": PASS_BAR, "must_pass_failures": must_pass_failures,
                "gate": "PASS" if gate else "FAIL",
                "by_category": {k: f"{v[0]}/{v[1]}" for k, v in sorted(by_cat.items())},
@@ -192,6 +199,9 @@ def _markdown(s: dict) -> str:
     for r in s["results"]:
         if r.get("skipped"):
             lines.append(f"| {r['id']} | skipped | {r['skipped']} |")
+            continue
+        if r.get("not_run"):
+            lines.append(f"| {r['id']} | NOT RUN | {r['not_run']} |")
             continue
         why = "; ".join(f"{k}: {v['reason']}" for k, v in r["metrics"].items() if not v["pass"]) or r.get("error", "")
         lines.append(f"| {r['id']} | {'PASS' if r['pass'] else 'FAIL'} | {why.replace('|', '/')[:200]} |")
