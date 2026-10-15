@@ -25,7 +25,7 @@ def _call(workdir, plants, calls):
     return asyncio.run(go())
 
 
-def test_mcp_serves_the_nine_tools_with_planning_instructions(workdir, cfg):
+def test_mcp_serves_the_tools_with_planning_instructions(workdir, cfg):
     init, tools, (summary, queue, refused) = _call(workdir, "1000", [
         ("get_shortage_summary", {}),
         ("get_shortage_queue", {"plant": "1000", "within_days": 7, "limit": 3}),
@@ -33,7 +33,7 @@ def test_mcp_serves_the_nine_tools_with_planning_instructions(workdir, cfg):
     ])
     assert init.server_info.name == "sapkit"
     assert "Every number you state comes from a tool result" in (init.instructions or "")
-    assert len(tools.tools) == 9
+    assert len(tools.tools) == 10
     s = json.loads(summary.content[0].text)
     assert {r["plant"] for r in s["rows"]} == {"1000"}  # scope from the environment, not the model
     q = json.loads(queue.content[0].text)

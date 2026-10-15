@@ -17,7 +17,8 @@ from pathlib import Path
 from . import db, outreach, replies, synth
 from .config import ROOT, load_config
 from .mail import MockMailbox
-from .tools import Session, Toolbox
+from .rbac import AccessDenied, Session, load_rbac
+from .tools import Toolbox
 
 DATA = ROOT / "data"
 OUT = ROOT / "out"
@@ -27,8 +28,31 @@ def _cfg(args):
     return load_config(args.config)
 
 
+DEFAULT_USER = "morgan.manager@acme-dummy.example"  # demo purchasing manager; override with --user
+
+
 def _plants(args, cfg) -> list[str]:
     return args.plants.split(",") if getattr(args, "plants", None) else list(cfg.plants)
+
+
+def _session(args, cfg) -> Session:
+    """Resolve the caller through RBAC; --plants can only narrow their scope."""
+    user = getattr(args, "user", None) or os.environ.get("SAPKIT_USER") or DEFAULT_USER
+    try:
+        session = load_rbac().session_for(user, cfg)
+    except AccessDenied as e:
+        print(f"Access denied: {e}", file=sys.stderr)
+        sys.exit(3)
+    if getattr(args, "plants", None):
+        session = session.restricted_to(args.plants.split(","))
+    return session
+
+
+def _require(session: Session, action: str) -> None:
+    if not session.can(action):
+        print(f"Access denied: {session.user} ({', '.join(session.roles)}) may not {action.replace('_', ' ')}.",
+              file=sys.stderr)
+        sys.exit(3)
 
 
 def _mailbox():
@@ -70,8 +94,9 @@ def cmd_reset(args):
 
 def cmd_query(args):
     cfg = _cfg(args)
-    con = db.connect(cfg)
-    tb = Toolbox(con, cfg, Session(user="cli", allowed_plants=_plants(args, cfg)))
+    session = _session(args, cfg)
+    con = db.connect(cfg, session=session)
+    tb = Toolbox(con, cfg, session, channel="cli")
     params = json.loads(args.args) if args.args else {}
     text, is_error = tb.run(args.tool, params)
     print(json.dumps(json.loads(text), indent=2))
@@ -80,8 +105,10 @@ def cmd_query(args):
 
 def cmd_outreach(args):
     cfg = _cfg(args)
-    con = db.connect(cfg)
-    res = outreach.run_outreach(con, cfg, _mailbox(), actor="cli", plants=_plants(args, cfg),
+    session = _session(args, cfg)
+    _require(session, "run_outreach")
+    con = db.connect(cfg, session=session)
+    res = outreach.run_outreach(con, cfg, _mailbox(), actor=session.user, plants=session.allowed_plants,
                                 create_drafts=not args.dry_run)
     print(json.dumps(res, indent=2))
     if not args.dry_run:
@@ -98,8 +125,10 @@ def _classifier(args, cfg):
 
 def cmd_replies(args):
     cfg = _cfg(args)
+    session = _session(args, cfg)
+    _require(session, "process_replies")
     con = db.connect(cfg)
-    res = replies.process_replies(con, cfg, _mailbox(), _classifier(args, cfg), actor="cli")
+    res = replies.process_replies(con, cfg, _mailbox(), _classifier(args, cfg), actor=session.user)
     print(json.dumps(res, indent=2))
 
 
@@ -109,8 +138,8 @@ def _has_credentials() -> bool:
 
 def cmd_ask(args):
     cfg = _cfg(args)
-    con = db.connect(cfg)
-    session = Session(user=args.user, allowed_plants=_plants(args, cfg))
+    session = _session(args, cfg)
+    con = db.connect(cfg, session=session)
     offline = args.offline or not _has_credentials()
     if offline:
         from .offline_agent import OFFLINE_NOTE, OfflineAgent
@@ -232,6 +261,7 @@ def cmd_mcp(args):
     from .mcp_server import main as mcp_main
     if args.plants:
         os.environ["SAPKIT_PLANTS"] = args.plants
+    os.environ["SAPKIT_USER"] = args.user or os.environ.get("SAPKIT_USER") or DEFAULT_USER
     mcp_main(args.config)
 
 
@@ -315,7 +345,6 @@ def main(argv=None):
     a.add_argument("question", nargs="?")
     a.add_argument("--offline", action="store_true", help="use the offline rule-based agent even if a key is set")
     a.add_argument("--plants")
-    a.add_argument("--user", default="demo.planner")
     a.add_argument("--show-tools", action="store_true")
     a.set_defaults(func=cmd_ask)
 
@@ -340,6 +369,8 @@ def main(argv=None):
     e.add_argument("--limit", type=int, default=0)
     e.set_defaults(func=cmd_eval)
 
+    for sp in (q, o, r, a, m):
+        sp.add_argument("--user", help=f"who is acting (default: $SAPKIT_USER or {DEFAULT_USER})")
     args = p.parse_args(argv)
     args.func(args)
 

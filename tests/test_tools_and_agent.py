@@ -74,6 +74,7 @@ def test_every_tool_runs(con, cfg, mailbox):
         "get_outreach_status": {"plant": "1000"},
         "preview_supplier_email": {"vendor": vendor},
         "get_supplier_replies": {"vendor": "", "category": "", "needs_review_only": False},
+        "get_drafts_for_review": {"status": "PENDING_REVIEW", "limit": 5},
     }
     assert set(args) == {t["name"] for t in tool_definitions(cfg)}
     for name, a in args.items():

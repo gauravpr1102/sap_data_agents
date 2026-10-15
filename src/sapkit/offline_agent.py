@@ -14,8 +14,9 @@ import re
 
 import duckdb
 
-from . import audit, guard
+from . import audit, guard, guardrails
 from .agent import AgentResult
+from .telemetry import Trace
 from .config import ClientConfig
 from .tools import Session, Toolbox
 
@@ -48,7 +49,7 @@ def _table(headers: list[str], rows: list[list]) -> str:
 class OfflineAgent:
     def __init__(self, con: duckdb.DuckDBPyConnection, cfg: ClientConfig, session: Session):
         self.con, self.cfg, self.session = con, cfg, session
-        self.toolbox = Toolbox(con, cfg, session)
+        self.toolbox = Toolbox(con, cfg, session, channel="agent-offline")
         self.calls: list[dict] = []
 
     # ---------------------------------------------------------------- parsing
@@ -83,13 +84,29 @@ class OfflineAgent:
     def _call(self, name: str, args: dict) -> tuple[dict, bool]:
         text, is_error = self.toolbox.run(name, args)
         self.calls.append({"tool": name, "input": args, "error": is_error})
-        audit.log(self.con, f"agent-offline:{self.session.user}", "tool_call", name,
-                  {"input": args, "error": is_error})
+        if not is_error:
+            self.outputs.append(text)
         return json.loads(text), is_error
 
     # ---------------------------------------------------------------- routing
     def ask(self, question: str) -> AgentResult:
+        trace = Trace(user=self.session.user, channel="agent-offline", question=question)
+        result = self._ask(question)
+        trace.tools, trace.guardrail = result.tool_calls, result.guardrail
+        trace.outcome = "blocked" if result.blocked else "answered"
+        trace.finish(self.con)
+        result.trace_id = trace.trace_id
+        return result
+
+    def _ask(self, question: str) -> AgentResult:
         self.calls = []
+        self.outputs: list[str] = []
+        screened = guardrails.screen_input(question)
+        if not screened.allowed:
+            audit.log(self.con, f"agent-offline:{self.session.user}", "input_blocked", screened.category,
+                      {"reason": screened.reason})
+            return AgentResult(guardrails.INPUT_REFUSAL.format(reason=screened.reason), [], blocked=True,
+                               stop_reason="input_guard", guardrail=screened.category)
         q = question.strip()
         low = q.lower()
         plants = self._plants(q)
@@ -102,6 +119,9 @@ class OfflineAgent:
         elif re.search(r"repl(y|ies|ied)|respon|answered|heard back", low):
             answer = self._replies(vendor, needs_review="review" in low,
                                    no_reply=bool(re.search(r"(haven't|have not|hasn't|not yet|no) repl", low)))
+        elif re.search(r"approv|awaiting|waiting for (my )?(review|approval)|on hold|review queue|drafts? (to|for) review|pending", low):
+            status = "ON_HOLD" if "on hold" in low else ("APPROVED" if re.search(r"\bapproved\b", low) else "PENDING_REVIEW")
+            answer = self._drafts(status)
         elif vendor and re.search(r"e-?mail|draft|preview|note", low):
             answer = self._preview(vendor)
         elif re.search(r"outreach|eligib|can't go|cannot go|contact|get a draft|drafts?\b|supplier e-?mails?|e-?mails? (to|for) suppliers?|which suppliers would", low):
@@ -125,7 +145,14 @@ class OfflineAgent:
 
         successful = sum(1 for c in self.calls if not c["error"])
         if guard.should_block(answer, successful):
-            return AgentResult(guard.BLOCKED_MESSAGE, self.calls, blocked=True, stop_reason="offline")
+            return AgentResult(guard.BLOCKED_MESSAGE, self.calls, blocked=True, stop_reason="offline",
+                               guardrail="ungrounded_table")
+        out = guardrails.screen_output(answer, self.outputs, question)
+        if not out.allowed:  # the templates should never trip this; if they do, it's a bug worth surfacing
+            audit.log(self.con, f"agent-offline:{self.session.user}", "answer_blocked", out.category,
+                      {"reason": out.reason, "details": out.details[:20]})
+            return AgentResult(f"I've held that answer back: {out.reason}.", self.calls, blocked=True,
+                               stop_reason="offline", guardrail=out.category)
         return AgentResult(answer, self.calls, stop_reason="offline")
 
     def _need_plant(self, plant, fn) -> str:
@@ -270,6 +297,18 @@ class OfflineAgent:
             return f"Supplier {vendor} has no eligible items, so there's no e-mail to preview."
         return (f"Here is the draft for supplier {vendor} ({data['eligible_items']} items). "
                 f"Nothing is created or sent; the buyer sends it.\n\nTo: {data['to']}\nSubject: {data['subject']}\n\n{data['body']}")
+
+    def _drafts(self, status: str) -> str:
+        data, err = self._call("get_drafts_for_review", {"status": status, "limit": 10})
+        if err:
+            return self._error(data)
+        label = status.replace("_", " ").lower()
+        if not data["rows"]:
+            return f"You have no drafts that are {label}."
+        lead = f"You have {_num(data['total_matching'])} supplier drafts that are {label}."
+        table = _table(["Draft", "Vendor", "Purchasing group", "Items"],
+                       [[r["outreach_id"], r["vendor"], r["ekgrp"], r["item_count"]] for r in data["rows"]])
+        return f"{lead} Approve, edit or hold them with `sapkit drafts`.\n\n{table}"
 
     def _replies(self, vendor: str | None, needs_review: bool, no_reply: bool) -> str:
         data, err = self._call("get_supplier_replies", {"vendor": vendor or "", "category": "",

@@ -60,6 +60,33 @@ CREATE TABLE IF NOT EXISTS ops_reply_commitment (
     client_id VARCHAR, message_id VARCHAR, matnr VARCHAR, confirmed_qty DOUBLE,
     ship_date DATE, constraint_note VARCHAR, matched_outreach BOOLEAN
 );
+CREATE TABLE IF NOT EXISTS ops_trace (
+    trace_id VARCHAR PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT current_timestamp,
+    user_id VARCHAR, channel VARCHAR, question VARCHAR,
+    latency_ms INTEGER, outcome VARCHAR, guardrail VARCHAR,
+    tool_calls INTEGER, tools VARCHAR, model VARCHAR, model_calls INTEGER,
+    input_tokens BIGINT, output_tokens BIGINT, cache_read_tokens BIGINT, cost_usd DOUBLE
+);
+CREATE TABLE IF NOT EXISTS ops_draft_review (
+    outreach_id VARCHAR PRIMARY KEY,
+    status VARCHAR,                -- PENDING_REVIEW, APPROVED, ON_HOLD, SENT
+    reviewer VARCHAR,
+    reviewed_at TIMESTAMP,
+    edited_body VARCHAR,
+    note VARCHAR,
+    sent_at TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS ops_followup (
+    followup_id VARCHAR PRIMARY KEY,
+    outreach_id VARCHAR, lifnr VARCHAR, step VARCHAR, due_at TIMESTAMP,
+    status VARCHAR, created_at TIMESTAMP DEFAULT current_timestamp
+);
+CREATE TABLE IF NOT EXISTS ops_dq_result (
+    run_id VARCHAR, check_id VARCHAR, severity VARCHAR, owner VARCHAR,
+    description VARCHAR, exceptions BIGINT, checked_rows BIGINT,
+    created_at TIMESTAMP DEFAULT current_timestamp
+);
 CREATE TABLE IF NOT EXISTS ops_thread_watermark (
     thread_id VARCHAR PRIMARY KEY,
     last_message_id VARCHAR,
@@ -74,6 +101,35 @@ def _quote_list(values) -> str:
     return ", ".join(f"'{v}'" for v in vals) or "''"
 
 
+def scope_clause(session) -> str:
+    """SQL predicate on MARC (alias c) limiting rows to the caller's scope."""
+    if session is None:
+        return ""
+    plants = _quote_list(session.allowed_plants) if session.allowed_plants else "NULL"
+    clause = f"AND c.werks IN ({plants})"
+    if session.purchasing_groups is not None:
+        groups = _quote_list(session.purchasing_groups) if session.purchasing_groups else "NULL"
+        clause += f" AND c.ekgrp IN ({groups})"
+    return clause
+
+
+def scoped_ops_views(session) -> str:
+    """Outreach and reply records the caller may see: their plants and purchasing groups."""
+    if session is None:
+        o_filter = "TRUE"
+    else:
+        plants = _quote_list(session.allowed_plants) if session.allowed_plants else "NULL"
+        o_filter = f"EXISTS (SELECT 1 FROM ops_outreach_item i WHERE i.outreach_id = o.outreach_id AND i.werks IN ({plants}))"
+        if session.purchasing_groups is not None:
+            groups = _quote_list(session.purchasing_groups) if session.purchasing_groups else "NULL"
+            o_filter += f" AND o.ekgrp IN ({groups})"
+    return f"""
+CREATE OR REPLACE TEMP VIEW v_my_outreach AS SELECT o.* FROM ops_outreach o WHERE {o_filter};
+CREATE OR REPLACE TEMP VIEW v_my_reply_extract AS
+    SELECT r.* FROM ops_reply_extract r WHERE r.lifnr IN (SELECT lifnr FROM v_my_outreach);
+"""
+
+
 def latest_capture_pair(con: duckdb.DuckDBPyConnection) -> tuple[str, str]:
     rows = con.execute(
         "SELECT capture_id FROM forecast_snapshot GROUP BY capture_id "
@@ -83,7 +139,7 @@ def latest_capture_pair(con: duckdb.DuckDBPyConnection) -> tuple[str, str]:
     return rows[1][0], rows[0][0]
 
 
-def render_rules(cfg: ClientConfig, con: duckdb.DuckDBPyConnection) -> str:
+def render_rules(cfg: ClientConfig, con: duckdb.DuckDBPyConnection, session=None) -> str:
     pair = cfg.get("forecast", "capture_pair", default="latest")
     if pair == "latest":
         prev, cur = latest_capture_pair(con)
@@ -108,6 +164,7 @@ def render_rules(cfg: ClientConfig, con: duckdb.DuckDBPyConnection) -> str:
         "hi_pct": str(float(cfg.get("forecast", "change_threshold_high_pct"))),
         "lo_pct": str(float(cfg.get("forecast", "change_threshold_low_pct"))),
         "urgency_case": urgency,
+        "session_scope": scope_clause(session),
     }
     sql = (SQL_DIR / "views.sql").read_text(encoding="utf-8")
     for k, v in params.items():
@@ -119,7 +176,8 @@ def render_rules(cfg: ClientConfig, con: duckdb.DuckDBPyConnection) -> str:
     return sql.replace("CREATE OR REPLACE VIEW", "CREATE OR REPLACE TEMP VIEW")
 
 
-def connect(cfg: ClientConfig, db_path: str | Path | None = None, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+def connect(cfg: ClientConfig, db_path: str | Path | None = None, read_only: bool = False,
+            session=None) -> duckdb.DuckDBPyConnection:
     # SAPKIT_DB lets a separate process (the MCP server, a test) point at another copy.
     path = Path(db_path or os.environ.get("SAPKIT_DB") or ROOT / "data" / f"{cfg.client_id}.duckdb")
     if not path.exists():
@@ -127,7 +185,9 @@ def connect(cfg: ClientConfig, db_path: str | Path | None = None, read_only: boo
     con = duckdb.connect(str(path), read_only=read_only)
     if not read_only:
         con.execute(OPS_DDL)
-    con.execute(render_rules(cfg, con))
+    con.execute(render_rules(cfg, con, session))
+    if not read_only:
+        con.execute(scoped_ops_views(session))
     return con
 
 

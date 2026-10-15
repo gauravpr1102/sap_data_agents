@@ -8,27 +8,22 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Callable
 
 import duckdb
 
-from . import outreach
+from . import audit, outreach
 from .config import ClientConfig
 from .db import rows
+from .rbac import AccessDenied, Session  # noqa: F401  (Session re-exported for callers)
 
 MAX_ROWS = 50
+MAX_ARG_CHARS = 200  # no legitimate argument is longer; longer ones are refused
 
 
 class ToolError(Exception):
     """A refusal or bad input, returned to the model as an error result."""
-
-
-@dataclass
-class Session:
-    user: str
-    allowed_plants: list[str]
 
 
 def _mat(material: str) -> str:
@@ -51,8 +46,9 @@ def _jsonable(v: Any) -> Any:
 
 
 class Toolbox:
-    def __init__(self, con: duckdb.DuckDBPyConnection, cfg: ClientConfig, session: Session):
-        self.con, self.cfg, self.session = con, cfg, session
+    def __init__(self, con: duckdb.DuckDBPyConnection, cfg: ClientConfig, session: Session,
+                 channel: str = "cli"):
+        self.con, self.cfg, self.session, self.channel = con, cfg, session, channel
         self._handlers: dict[str, Callable[..., dict]] = {
             "get_shortage_summary": self.get_shortage_summary,
             "get_shortage_queue": self.get_shortage_queue,
@@ -63,6 +59,7 @@ class Toolbox:
             "get_outreach_status": self.get_outreach_status,
             "preview_supplier_email": self.preview_supplier_email,
             "get_supplier_replies": self.get_supplier_replies,
+            "get_drafts_for_review": self.get_drafts_for_review,
         }
 
     # -------------------------------------------------------------- plumbing
@@ -85,16 +82,37 @@ class Toolbox:
         }
 
     def run(self, name: str, args: dict) -> tuple[str, bool]:
-        """Execute a tool. Returns (json_text, is_error)."""
+        """Execute a tool. Returns (json_text, is_error). Every call is audited."""
+        decision, text, is_error = "allowed", "", False
         handler = self._handlers.get(name)
         if handler is None:
-            return json.dumps({"error": f"unknown tool {name}"}), True
+            decision, text, is_error = "unknown_tool", json.dumps({"error": f"unknown tool {name}"}), True
+        elif not self.session.can_use_tool(name):
+            decision = "denied_tool"
+            text, is_error = json.dumps({"error": f"Your role does not allow the {name} tool."}), True
+        else:
+            try:
+                self._check_args(args)
+                text = json.dumps(handler(**args), default=str)
+            except ToolError as e:
+                decision = "denied_scope" if "access" in str(e) else "refused"
+                text, is_error = json.dumps({"error": str(e)}), True
+            except TypeError as e:
+                decision, text, is_error = "bad_arguments", json.dumps({"error": f"bad arguments: {e}"}), True
         try:
-            return json.dumps(handler(**args), default=str), False
-        except ToolError as e:
-            return json.dumps({"error": str(e)}), True
-        except TypeError as e:
-            return json.dumps({"error": f"bad arguments: {e}"}), True
+            audit.log(self.con, f"{self.channel}:{self.session.user}", "tool_call", name,
+                      {"input": args, "decision": decision, "error": is_error})
+        except duckdb.Error:
+            pass  # read-only connections can't write the audit log; callers that need audit use read-write
+        return text, is_error
+
+    @staticmethod
+    def _check_args(args: dict) -> None:
+        for k, v in args.items():
+            if isinstance(v, str) and len(v) > MAX_ARG_CHARS:
+                raise ToolError(f"Argument '{k}' is too long.")
+            if isinstance(v, list) and len(v) > 20:
+                raise ToolError(f"Argument '{k}' has too many items.")
 
     # -------------------------------------------------------------- tools
     def get_shortage_summary(self) -> dict:
@@ -236,6 +254,16 @@ class Toolbox:
         p["note"] = "Preview only. Nothing is created or sent by this tool; the buyer sends."
         return p
 
+    def get_drafts_for_review(self, status: str, limit: int) -> dict:
+        from .workflow import STATUSES, review_queue
+        if status not in STATUSES:
+            raise ToolError(f"Status must be one of {', '.join(STATUSES)}.")
+        total, data = review_queue(self.con, self.session, status, max(1, min(int(limit), MAX_ROWS)))
+        for d in data:
+            d["vendor"] = d.pop("lifnr").lstrip("0")
+        return self._envelope(data, total, status=status,
+                              note="Approve, edit or hold drafts with `sapkit drafts`; the buyer sends them.")
+
     def get_supplier_replies(self, vendor: str, category: str, needs_review_only: bool) -> dict:
         where, params = ["1=1"], []
         if vendor:
@@ -249,19 +277,19 @@ class Toolbox:
         w = " AND ".join(where)
         by_category = rows(self.con, """SELECT category, count(*) AS replies,
                                                count(*) FILTER (WHERE needs_buyer_review) AS need_review
-                                        FROM ops_reply_extract GROUP BY category ORDER BY replies DESC""")
-        total = self.con.execute(f"SELECT count(*) FROM ops_reply_extract r WHERE {w}", params).fetchone()[0]
+                                        FROM v_my_reply_extract GROUP BY category ORDER BY replies DESC""")
+        total = self.con.execute(f"SELECT count(*) FROM v_my_reply_extract r WHERE {w}", params).fetchone()[0]
         data = rows(self.con, f"""
             SELECT r.lifnr AS vendor, r.message_id, r.category, r.summary, r.needs_buyer_review, r.review_reasons,
                    r.instructions_to_ai_detected,
                    (SELECT list(struct_pack(part := c.matnr, confirmed_qty := c.confirmed_qty, ship_date := c.ship_date))
                     FROM ops_reply_commitment c WHERE c.message_id = r.message_id) AS commitments
-            FROM ops_reply_extract r WHERE {w} ORDER BY r.lifnr, r.message_id LIMIT ?""", params + [MAX_ROWS])
+            FROM v_my_reply_extract r WHERE {w} ORDER BY r.lifnr, r.message_id LIMIT ?""", params + [MAX_ROWS])
         for r in data:
             r["vendor"] = r["vendor"].lstrip("0")
             r["commitments"] = [{"part": c["part"].lstrip("0"), "confirmed_qty": c["confirmed_qty"],
                                  "ship_date": _jsonable(c["ship_date"])} for c in (r["commitments"] or [])]
-        unreplied = rows(self.con, """SELECT DISTINCT o.lifnr FROM ops_outreach o WHERE NOT EXISTS
+        unreplied = rows(self.con, """SELECT DISTINCT o.lifnr FROM v_my_outreach o WHERE NOT EXISTS
                                       (SELECT 1 FROM ops_reply_extract r WHERE r.lifnr = o.lifnr) ORDER BY 1""")
         return self._envelope(data, total, all_replies_by_category=by_category,
                               replies_needing_review_total=sum(c["need_review"] for c in by_category),
@@ -269,8 +297,17 @@ class Toolbox:
                               vendors_without_reply_total=len(unreplied))
 
 
-def tool_definitions(cfg: ClientConfig) -> list[dict]:
-    """Strict JSON schemas; every field required (DECISIONS D5)."""
+def _drafts_doc() -> str:
+    return ("Supplier e-mail drafts in a given status that you may act on (your purchasing groups and plants): "
+            "PENDING_REVIEW, APPROVED, ON_HOLD or SENT.")
+
+
+def tool_definitions(cfg: ClientConfig, session: Session | None = None) -> list[dict]:
+    """Strict JSON schemas; every field required (DECISIONS D5).
+
+    With a session, only the tools that session may use are offered to the model
+    (least privilege: the model never sees a tool it would be refused).
+    """
     plant = {"type": "string", "enum": list(cfg.plants), "description": "SAP plant code (WERKS)."}
     limit = {"type": "integer", "description": f"Maximum rows to return (1-{MAX_ROWS})."}
 
@@ -279,7 +316,7 @@ def tool_definitions(cfg: ClientConfig) -> list[dict]:
                 "input_schema": {"type": "object", "properties": props, "required": list(props),
                                  "additionalProperties": False}}
 
-    return [
+    defs = [
         tool("get_shortage_summary",
              "Shortage counts per plant the user can see: total shortages, short within 7 days, short today, "
              "value at risk, missing shipping notices and safety-stock dips. Use for any cross-plant or "
@@ -320,4 +357,11 @@ def tool_definitions(cfg: ClientConfig) -> list[dict]:
              {"vendor": {"type": "string", "description": "Vendor number, or empty string for all vendors."},
               "category": {"type": "string", "description": "Reply category to filter on, or empty string for all."},
               "needs_review_only": {"type": "boolean", "description": "True to return only replies a buyer must review."}}),
+        tool("get_drafts_for_review", _drafts_doc(),
+             {"status": {"type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "ON_HOLD", "SENT"],
+                         "description": "Draft status to list."},
+              "limit": limit}),
     ]
+    if session is None:
+        return defs
+    return [d for d in defs if session.can_use_tool(d["name"])]

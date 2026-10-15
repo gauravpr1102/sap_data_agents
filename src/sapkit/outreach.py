@@ -179,6 +179,10 @@ def run_outreach(con: duckdb.DuckDBPyConnection, cfg: ClientConfig, mailbox: Mai
                 raise
             created += 1
 
+    if create_drafts:
+        from .workflow import register_drafts
+        register_drafts(con)  # every new draft starts PENDING_REVIEW
+
     counts: dict[str, int] = defaultdict(int)
     for d in decisions:
         counts[d["disposition"]] += 1

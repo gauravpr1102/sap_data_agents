@@ -103,14 +103,13 @@ Rules:
 class ClaudeClassifier:
     name = "claude"
 
-    def __init__(self, cfg: ClientConfig, client: Any | None = None, use_fallbacks: bool = True):
-        if client is None:
-            import anthropic
-            client = anthropic.Anthropic()
-        self.client = client
-        self.model = cfg.get("replies", "model", default="claude-opus-5-5")
-        self.effort = cfg.get("replies", "effort", default="medium")
-        self.use_fallbacks = use_fallbacks
+    def __init__(self, cfg: ClientConfig, client: Any | None = None, use_fallbacks: bool | None = None):
+        from . import llm
+        st = llm.settings(cfg)
+        self.client = client if client is not None else llm.make_client(st)
+        self.model = st.model
+        self.effort = st.effort
+        self.use_fallbacks = st.supports_fallbacks if use_fallbacks is None else use_fallbacks
 
     def classify(self, body: str, items: list[dict]) -> Extraction:
         item_lines = "\n".join(

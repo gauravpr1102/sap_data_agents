@@ -1,0 +1,73 @@
+# Role-based access control for the dummy client.
+#
+# Config as code: changes go through review like any other change, and every
+# access decision at runtime is written to the audit log. Anyone not listed
+# here gets no access at all (deny by default).
+#
+# In production the user id is the identity asserted by the identity provider
+# (for example Google IAP's X-Goog-Authenticated-User-Email or an Entra ID
+# token), never something the user types.
+
+roles:
+  planner:
+    description: Material planner. Reads shortages and forecast changes for their plants.
+    tools: [get_shortage_summary, get_shortage_queue, get_shortage_detail, get_missing_asn,
+            get_safety_stock_dips, get_forecast_changes]
+    actions: []
+  buyer:
+    description: Buyer. Everything a planner sees, plus outreach and replies for their own purchasing groups.
+    tools: [get_shortage_summary, get_shortage_queue, get_shortage_detail, get_missing_asn,
+            get_safety_stock_dips, get_forecast_changes, get_outreach_status,
+            preview_supplier_email, get_supplier_replies, get_drafts_for_review]
+    actions: [approve_draft, edit_draft, hold_draft, mark_sent]
+  purchasing_manager:
+    description: Purchasing manager. All purchasing groups in their plants; can run outreach and reply processing.
+    tools: [get_shortage_summary, get_shortage_queue, get_shortage_detail, get_missing_asn,
+            get_safety_stock_dips, get_forecast_changes, get_outreach_status,
+            preview_supplier_email, get_supplier_replies, get_drafts_for_review]
+    actions: [approve_draft, edit_draft, hold_draft, mark_sent, run_outreach, process_replies, run_reminders]
+  auditor:
+    description: Internal audit. Reads the audit trail and summaries; cannot see supplier e-mails or act.
+    tools: [get_shortage_summary]
+    actions: [read_audit]
+  admin:
+    description: Platform admin. Manages users and runs every job. Not a business role.
+    tools: ["*"]
+    actions: ["*"]
+
+users:
+  - id: avery.buyer@acme-dummy.example
+    name: Avery (Buyer P01)
+    roles: [buyer]
+    plants: ["1000"]
+    purchasing_groups: [P01, P02]
+
+  - id: jordan.planner@acme-dummy.example
+    name: Jordan (Planner, Riverside)
+    roles: [planner]
+    plants: ["1000"]
+
+  - id: riley.planner@acme-dummy.example
+    name: Riley (Planner, Lakeside and Hillview)
+    roles: [planner]
+    plants: ["2000", "3000"]
+
+  - id: morgan.manager@acme-dummy.example
+    name: Morgan (Purchasing Manager)
+    roles: [purchasing_manager]
+    plants: ["1000", "2000", "3000"]
+
+  - id: casey.auditor@acme-dummy.example
+    name: Casey (Internal Audit)
+    roles: [auditor]
+    plants: ["1000", "2000", "3000"]
+
+  - id: admin@acme-dummy.example
+    name: Platform admin
+    roles: [admin]
+    plants: ["1000", "2000", "3000"]
+
+  - id: contractor@acme-dummy.example
+    name: Contractor with no role yet
+    roles: []
+    plants: []

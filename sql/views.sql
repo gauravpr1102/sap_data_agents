@@ -16,7 +16,9 @@ JOIN mara a USING (matnr)
 WHERE c.beskz IN ({{procurement_types}})
   AND c.dismm NOT IN ({{exclude_mrp_types}})
   AND coalesce(c.mmsta, '') IN ({{active_statuses}})
-  AND c.werks IN ({{plants}});
+  AND c.werks IN ({{plants}})
+  -- Row-level security: the caller's plants and purchasing groups (empty for full-scope jobs).
+  {{session_scope}};
 
 -- ---------------------------------------------------------------- purchasing
 -- Open PO schedule lines, with whether a shipping notification (EKES-EBTYP = 'LA')

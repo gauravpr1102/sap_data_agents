@@ -18,16 +18,28 @@ import os
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import audit, db
+from . import db
+from .rbac import AccessDenied, load_rbac
 from .agent import system_prompt
 from .config import load_config
 from .tools import Session, Toolbox
 
 
 def _session(cfg) -> Session:
+    """The MCP caller's identity comes from SAPKIT_USER and is resolved through RBAC.
+
+    SAPKIT_PLANTS can narrow (never widen) the user's plants. An unknown user
+    gets a server whose every tool call is refused.
+    """
+    user = os.environ.get("SAPKIT_USER", "").strip()
+    try:
+        session = load_rbac().session_for(user, cfg)
+    except AccessDenied:
+        return Session(user=user or "anonymous", allowed_plants=[], tools=frozenset(), actions=frozenset())
     env = os.environ.get("SAPKIT_PLANTS", "").strip()
-    plants = [p.strip() for p in env.split(",") if p.strip()] if env else list(cfg.plants)
-    return Session(user=os.environ.get("SAPKIT_USER", "mcp-user"), allowed_plants=plants)
+    if env:
+        session = session.restricted_to([p.strip() for p in env.split(",") if p.strip()])
+    return session
 
 
 def build_server(config_path: str | None = None) -> MCPServer:
@@ -40,10 +52,9 @@ def build_server(config_path: str | None = None) -> MCPServer:
     )
 
     def run(tool: str, args: dict) -> str:
-        con = db.connect(cfg)
+        con = db.connect(cfg, session=session)
         try:
-            text, is_error = Toolbox(con, cfg, session).run(tool, args)
-            audit.log(con, f"mcp:{session.user}", "tool_call", tool, {"input": args, "error": is_error})
+            text, is_error = Toolbox(con, cfg, session, channel="mcp").run(tool, args)
         finally:
             con.close()
         if is_error:
@@ -103,6 +114,11 @@ def build_server(config_path: str | None = None) -> MCPServer:
     def get_supplier_replies(vendor: str = "", category: str = "", needs_review_only: bool = False) -> str:
         return run("get_supplier_replies", {"vendor": vendor, "category": category,
                                             "needs_review_only": needs_review_only})
+
+    @server.tool(name="get_drafts_for_review",
+                 description="Supplier e-mail drafts you may act on, by status: PENDING_REVIEW, APPROVED, ON_HOLD, SENT.")
+    def get_drafts_for_review(status: str = "PENDING_REVIEW", limit: int = 10) -> str:
+        return run("get_drafts_for_review", {"status": status, "limit": limit})
 
     return server
 
