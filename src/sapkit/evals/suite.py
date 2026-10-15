@@ -128,7 +128,7 @@ def run(cfg: ClientConfig, runner: str = "offline", judge: bool = False, limit: 
         obs = run_fn(cfg, c["user"], c["question"])
         if obs.error.startswith(("Claude usage limit", "MCP server not connected", "timeout")):
             # Infrastructure, not the agent: report as not run, never as a pass or a fail.
-            results.append({"id": c["id"], "category": c["category"], "pass": False, "not_run": obs.error,
+            results.append({"id": c["id"], "category": c["category"], "pass": False, "not_run": obs.error,  # nosec B105
                             "question": c["question"]})
             continue
         tc = LLMTestCase(
