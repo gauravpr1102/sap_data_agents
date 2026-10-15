@@ -313,6 +313,10 @@ def cmd_verify(args):
     """Compare every rule with the answers the generator built in."""
     cfg = _cfg(args)
     con = db.connect(cfg)
+    if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'expected_shortage'").fetchone()[0]:
+        print("This data has no built-in answer key: verify works on data made by `sapkit generate`.\n"
+              "For a client's extract, use `sapkit dq` and have planners confirm a sample of materials.")
+        sys.exit(2)
     failures = 0
     print(f"Verifying rules against known answers ({cfg.client_name})\n")
     for name, sql in VERIFY_CHECKS.items():

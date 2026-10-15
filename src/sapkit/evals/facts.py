@@ -10,7 +10,10 @@ from ..config import ClientConfig
 
 
 def _one(con, sql, params=None, default=None):
-    r = con.execute(sql, params or []).fetchone()
+    try:
+        r = con.execute(sql, params or []).fetchone()
+    except duckdb.CatalogException:  # e.g. no answer-key tables in a client's real extract
+        return default
     return r[0] if r and r[0] is not None else default
 
 

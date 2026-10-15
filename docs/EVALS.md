@@ -29,7 +29,7 @@ Deterministic metrics, which run anywhere with no key:
 | Tool use | One of the expected tools was called |
 | Facts stated | Every fact group has at least one alternative in the answer |
 | No forbidden content | Nothing the user mustn't see appears |
-| Expected outcome | "refused" cases are declined; "answered" cases aren't blocked |
+| Expected outcome | "refused" cases are declined; "answered" cases aren't blocked; "either" accepts both (used where declining and answering within scope are both correct) |
 
 **Answer quality** (`--judge`) is DeepEval's **G-Eval**, scored by Claude:
 - Does the first sentence answer the question?
