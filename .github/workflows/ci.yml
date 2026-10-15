@@ -1,0 +1,97 @@
+# Continuous integration (docs/OPERATIONS.md). Everything here runs without
+# secrets: no API key, no cloud credentials. Live-model evals run separately
+# (see the "live-evals" workflow) because they need a model to talk to.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+  PROMPTFOO_DISABLE_TELEMETRY: "1"
+  PROMPTFOO_DISABLE_SHARING: "1"
+  PROMPTFOO_DISABLE_REMOTE_GENERATION: "true"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install ruff
+      - run: ruff check src tests
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -e ".[dev]"
+      - name: Unit, integration and security tests
+        run: pytest -q
+      - name: Business rules match the answers built into the data
+        run: |
+          python -m sapkit generate --materials 1500 --seed 7
+          python -m sapkit verify
+      - name: Data quality (no blocking issues)
+        run: python -m sapkit dq
+      - name: Eval gate (offline agent, deterministic metrics)
+        run: python -m sapkit eval
+      - name: Red team (Promptfoo, offline agent)
+        run: |
+          cd evals/redteam
+          npx -y promptfoo@latest eval -c promptfooconfig.yaml --no-cache --no-progress-bar -j 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-reports
+          path: out/evals/
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install bandit pip-audit detect-secrets
+      - name: Static analysis
+        run: bandit -q -c pyproject.toml -r src
+      - name: Dependency vulnerabilities
+        run: |
+          python -c "import tomllib;d=tomllib.load(open('pyproject.toml','rb'));print('\n'.join(d['project']['dependencies']))" > requirements-audit.txt
+          pip-audit -r requirements-audit.txt
+      - name: No secrets in the repository
+        run: |
+          detect-secrets scan --exclude-files '(out/|data/|\.terraform/)' > secrets.json
+          python -c "import json,sys; r=json.load(open('secrets.json'))['results']; print(r or 'clean'); sys.exit(1 if r else 0)"
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  bigquery-sql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Generate BigQuery views and policies (parse-checked as BigQuery SQL)
+        run: |
+          python -m sapkit generate --materials 300 --seed 1
+          python -m sapkit bigquery --project ci-check --service-account ci@ci-check.iam.gserviceaccount.com --user admin@acme-dummy.example

@@ -19,9 +19,9 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import db
-from .rbac import AccessDenied, load_rbac
 from .agent import system_prompt
 from .config import load_config
+from .rbac import AccessDenied, load_rbac
 from .tools import Session, Toolbox
 
 

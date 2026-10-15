@@ -15,12 +15,11 @@ def _call(workdir, plants, calls):
 
     async def go():
         params = StdioServerParameters(command=sys.executable, args=["-m", "sapkit", "mcp"], env=env)
-        async with stdio_client(params) as (r, w):
-            async with ClientSession(r, w) as s:
-                init = await s.initialize()
-                tools = await s.list_tools()
-                results = [await s.call_tool(name, args) for name, args in calls]
-                return init, tools, results
+        async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+            init = await s.initialize()
+            tools = await s.list_tools()
+            results = [await s.call_tool(name, args) for name, args in calls]
+            return init, tools, results
 
     return asyncio.run(go())
 

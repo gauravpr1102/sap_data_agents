@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 import duckdb
 
@@ -340,7 +341,9 @@ def tool_definitions(cfg: ClientConfig, session: Session | None = None) -> list[
              {"plant": plant, "limit": limit}),
         tool("get_forecast_changes",
              "Forecast changes between the last two planning snapshots, ranked 1-7 by lead-time window and size "
-             "of change (see rank_legend in the result).",
+             "of change (see rank_legend in the result). Every row names the two snapshots compared "
+             "(capture_prev, capture_cur); the pair is the same for every plant, so any plant answers "
+             "'which snapshots are compared'.",
              {"plant": plant,
               "ranks": {"type": "array", "items": {"type": "integer"}, "description": "Ranks to include; empty for all."},
               "limit": limit}),

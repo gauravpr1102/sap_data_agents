@@ -56,7 +56,7 @@ class Session:
     def covers_group(self, ekgrp: str | None) -> bool:
         return self.purchasing_groups is None or (ekgrp is not None and ekgrp in self.purchasing_groups)
 
-    def restricted_to(self, plants: list[str]) -> "Session":
+    def restricted_to(self, plants: list[str]) -> Session:
         """Narrow plant scope further (never widen it)."""
         keep = [p for p in self.allowed_plants if p in set(plants)]
         return Session(self.user, keep, self.roles, self.purchasing_groups, self.tools, self.actions, self.display_name)

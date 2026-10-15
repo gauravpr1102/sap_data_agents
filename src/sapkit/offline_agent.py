@@ -16,8 +16,8 @@ import duckdb
 
 from . import audit, guard, guardrails
 from .agent import AgentResult
-from .telemetry import Trace
 from .config import ClientConfig
+from .telemetry import Trace
 from .tools import Session, Toolbox
 
 OFFLINE_NOTE = "(offline mode: answered by rules over the same tools, not by Claude)"
@@ -113,10 +113,16 @@ class OfflineAgent:
         plant = plants[0] if plants else None
         material, vendor = self._material(q), self._vendor(q)
 
-        if re.search(r"\bprices?\b|\bpricing\b|\bcost\b", low) and re.search(r"supplier|vendor|e-?mail|draft", low):
+        if re.search(r"next year|in 20\d\d|predict|will (the )?(shortage|count).{0,30}be", low):
+            answer = (f"I can't predict beyond the data. I can only report shortages within the "
+                      f"{self.cfg.horizon_days}-day planning horizon, as of {_date(self.cfg.as_of.isoformat())}.")
+        elif re.search(r"\bas of\b|how (fresh|old|recent)|data date|last updated|when was the data", low):
+            data, err = self._call("get_shortage_summary", {})
+            answer = self._error(data) if err else f"The planning data is as of {_date(data['data_as_of'])}."
+        elif re.search(r"\bprices?\b|\bpricing\b|\bcost\b", low) and re.search(r"supplier|vendor|e-?mail|draft", low):
             answer = ("I can't put prices into anything meant for a supplier. Supplier e-mails only carry "
                       "part numbers, quantities and dates, and a buyer reviews and sends every one.")
-        elif re.search(r"repl(y|ies|ied)|respon|answered|heard back", low):
+        elif re.search(r"repl(y|ies|ied)|respon|answered|heard back|can(not|'t)? meet|partially meet", low):
             answer = self._replies(vendor, needs_review="review" in low,
                                    no_reply=bool(re.search(r"(haven't|have not|hasn't|not yet|no) repl", low)))
         elif re.search(r"approv|awaiting|waiting for (my )?(review|approval)|on hold|review queue|drafts? (to|for) review|pending", low):
@@ -124,10 +130,14 @@ class OfflineAgent:
             answer = self._drafts(status)
         elif vendor and re.search(r"e-?mail|draft|preview|note", low):
             answer = self._preview(vendor)
-        elif re.search(r"outreach|eligib|can't go|cannot go|contact|get a draft|drafts?\b|supplier e-?mails?|e-?mails? (to|for) suppliers?|which suppliers would", low):
+        elif re.search(r"outreach|eligib|can't go|cannot go|contact|get a draft|"
+                       r"drafts?\b|supplier e-?mails?|e-?mails? (to|for) suppliers?|which suppliers would", low):
             answer = self._need_plant(plant, lambda p: self._outreach(p))
         elif re.search(r"forecast|increase|decrease|volume change", low):
-            ranks = [1] if re.search(r"(inside|within) lead time", low) else ([3] if "beyond lead time" in low or "outside lead time" in low else [])
+            ranks = ([7] if "new demand" in low else [1] if re.search(r"(inside|within) lead time", low)
+                     else [3] if "beyond lead time" in low or "outside lead time" in low else [])
+            if not plant and "snapshot" in low:  # the snapshot pair is the same for every plant
+                plant = self.session.allowed_plants[0]
             answer = self._need_plant(plant, lambda p: self._forecast(p, ranks))
         elif material:
             answer = self._detail(material, plant)

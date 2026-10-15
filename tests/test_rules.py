@@ -121,7 +121,8 @@ def test_risk_rank_is_contiguous_per_plant(con):
 
 def test_supplier_resolution_never_guesses(con):
     # Ambiguous or empty resolutions must not carry a vendor.
-    n = con.execute("SELECT count(*) FROM v_supplier_candidates WHERE resolution IN ('AMBIGUOUS', 'NONE') AND vendor IS NOT NULL").fetchone()[0]
+    n = con.execute("SELECT count(*) FROM v_supplier_candidates "
+                    "WHERE resolution IN ('AMBIGUOUS', 'NONE') AND vendor IS NOT NULL").fetchone()[0]
     assert n == 0
 
 

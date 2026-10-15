@@ -104,7 +104,7 @@ def _export_opik(trace: Trace, row: dict) -> None:
                      output={"outcome": trace.outcome, "guardrail": trace.guardrail},
                      metadata={k: v for k, v in row.items() if k not in ("question",)})
         client.flush()
-    except Exception as e:  # tracing must never break an answer
+    except Exception as e:  # noqa: BLE001 - tracing must never break an answer
         print(f"opik export failed: {type(e).__name__}: {e}", file=sys.stderr)
 
 
@@ -118,7 +118,7 @@ def summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
                round(sum(cost_usd), 4) AS cost_usd
         FROM ops_trace GROUP BY channel ORDER BY channel""")
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
 
 
 __all__ = ["Trace", "estimate_cost", "summary", "PRICES", "asdict"]

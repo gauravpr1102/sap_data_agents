@@ -1,6 +1,6 @@
 [project]
 name = "sapkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "SAP planning and procurement agents on Claude, for a dummy SAP client"
 requires-python = ">=3.10"
 dependencies = [
@@ -8,11 +8,15 @@ dependencies = [
   "duckdb>=1.1",
   "pandas>=2",          # DuckDB probes for pandas on every parameterised query; without it each probe is a slow failed import
   "pyyaml>=6",
-  "mcp>=2.3,<3",        # serves the tools to Claude Code / Claude Desktop
+  "mcp>=2.3,<3",
+  "httpx>=0.27",         # Gmail / Microsoft Graph adapters, content-filter hook        # serves the tools to Claude Code / Claude Desktop
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+web = ["fastapi>=0.110", "uvicorn>=0.30", "httpx>=0.27"]
+evals = ["deepeval>=4.2"]
+bigquery = ["sqlglot>=30"]
+dev = ["pytest>=8", "ruff>=0.17", "sapkit[web,evals,bigquery]"]
 
 [project.scripts]
 sapkit = "sapkit.cli:main"
@@ -27,3 +31,28 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+extend-exclude = ["deploy", "out", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "SIM"]
+ignore = [
+  "S101",   # assert is used in tests
+  "S608",   # SQL is built from reviewed templates with bound parameters; see docs/SECURITY.md
+  "S603", "S607",  # subprocess calls to the Claude Code CLI are fixed argument lists, no shell
+  "B008",   # FastAPI Depends() in defaults is the framework's pattern
+  "UP007", "UP045",
+  "SIM105", "SIM108",  # style preferences, not defects
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+"src/sapkit/synth.py" = ["S311", "S105", "E501"]
+"src/sapkit/web.py" = ["E501"]  # inline HTML/JS template  # random is for synthetic data, not security
+
+[tool.bandit]
+exclude_dirs = ["tests", "out", "data", "deploy"]
+skips = ["B101", "B608", "B603", "B607", "B404", "B311"]

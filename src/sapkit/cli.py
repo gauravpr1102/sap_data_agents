@@ -194,7 +194,9 @@ def cmd_report(args):
     cfg = _cfg(args)
     con = db.connect(cfg)
     rep = OUT / "report"
-    q = lambda sql: db.rows(con, sql)
+    def q(sql):
+        return db.rows(con, sql)
+
     exports = {
         "shortages.csv": "SELECT werks, risk_rank, matnr, maktx, first_short_date, days_to_short, shortfall_qty, "
                          "recovery_date, parent_count, unit_cost, value_at_risk, risk_score FROM v_shortage ORDER BY werks, risk_rank",
@@ -212,7 +214,7 @@ def cmd_report(args):
     for name, sql in exports.items():
         try:
             _write_csv(rep / name, q(sql))
-        except Exception as e:  # ops tables are empty before the first outreach run
+        except Exception as e:  # noqa: BLE001 - ops tables are empty before the first outreach run
             print(f"  skipped {name}: {e}", file=sys.stderr)
     summary = q("""SELECT werks, count(*) shortages, count(*) FILTER (WHERE days_to_short <= 7) within_7,
                           round(sum(coalesce(value_at_risk, 0)), 0) value_at_risk FROM v_shortage GROUP BY werks ORDER BY werks""")
@@ -225,7 +227,8 @@ def cmd_report(args):
     if disp:
         lines += ["", "## Outreach dispositions", "", "| Disposition | Items |", "|---|---:|"]
         lines += [f"| {d['disposition']} | {d['n']:,} |" for d in disp]
-    cats = q("SELECT category, count(*) n, count(*) FILTER (WHERE needs_buyer_review) review FROM ops_reply_extract GROUP BY 1 ORDER BY 2 DESC") if _has(con, "ops_reply_extract") else []
+    cats = q("SELECT category, count(*) n, count(*) FILTER (WHERE needs_buyer_review) review "
+             "FROM ops_reply_extract GROUP BY 1 ORDER BY 2 DESC") if _has(con, "ops_reply_extract") else []
     if cats:
         lines += ["", "## Supplier replies", "", "| Category | Replies | Need buyer review |", "|---|---:|---:|"]
         lines += [f"| {c['category']} | {c['n']} | {c['review']} |" for c in cats]
@@ -266,8 +269,17 @@ def cmd_mcp(args):
 
 
 def cmd_eval(args):
-    from .evals_runner import run_evals
-    sys.exit(run_evals(_cfg(args), live=args.live, limit=args.limit, offline_agent=args.agent))
+    from .evals.suite import run
+    runner = "api" if args.live else args.runner
+    res = run(_cfg(args), runner=runner, judge=args.judge, limit=args.limit, only=args.only)
+    for r in res["results"]:
+        status = "SKIP" if r.get("skipped") else ("PASS" if r["pass"] else "FAIL")
+        print(f"{r['id']:<6} {status}  {r.get('question', r.get('skipped', ''))[:90]}")
+    print(f"\n{res['passed']}/{res['scored']} passed ({res['pass_rate']:.1%}) with the {runner} runner; "
+          f"gate {res['gate']} (bar {res['pass_bar']:.0%}, all security/RBAC cases must pass)")
+    print("By category: " + ", ".join(f"{k} {v}" for k, v in res["by_category"].items()))
+    print(f"Report: {res['report']}")
+    sys.exit(0 if res["gate"] == "PASS" else 1)
 
 
 VERIFY_CHECKS = {
@@ -364,12 +376,17 @@ def main(argv=None):
     sub.add_parser("verify", help="check every rule against the answers built into the data").set_defaults(func=cmd_verify)
 
     e = sub.add_parser("eval", help="agent evaluation questions (tool-level offline, or --live with Claude)")
-    e.add_argument("--live", action="store_true", help="ask the real Claude agent (needs a key)")
-    e.add_argument("--agent", action="store_true", help="ask the offline agent (no key needed)")
+    e.add_argument("--runner", choices=["offline", "claude-code", "api"], default="offline",
+                   help="offline agent (default), real Claude via Claude Code (no key), or the API agent")
+    e.add_argument("--live", action="store_true", help="same as --runner api")
+    e.add_argument("--judge", action="store_true", help="add DeepEval G-Eval answer quality judged by Claude")
+    e.add_argument("--only", help="run one category or case-id prefix, e.g. security or SH-")
     e.add_argument("--limit", type=int, default=0)
     e.set_defaults(func=cmd_eval)
 
-    for sp in (q, o, r, a, m):
+    from .cli_admin import register
+    admin_parsers = register(sub)
+    for sp in (q, o, r, a, m, *admin_parsers):
         sp.add_argument("--user", help=f"who is acting (default: $SAPKIT_USER or {DEFAULT_USER})")
     args = p.parse_args(argv)
     args.func(args)

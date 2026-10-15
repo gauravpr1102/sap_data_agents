@@ -241,14 +241,16 @@ def process_replies(con: duckdb.DuckDBPyConnection, cfg: ClientConfig, mailbox: 
                     classifier: Classifier, actor: str = "batch",
                     fail_on_message_id: str | None = None) -> dict:
     internal = {"acme-dummy.example"}
-    threads = rows(con, "SELECT outreach_id, thread_id, lifnr FROM ops_outreach ORDER BY created_at, outreach_id")
+    threads = rows(con, "SELECT outreach_id, thread_id, lifnr, buyer_email FROM ops_outreach "
+                       "ORDER BY created_at, outreach_id")
     processed = skipped_dupe = skipped_internal = failed = 0
     categories: dict[str, int] = {}
     for th in threads:
         wm = con.execute("SELECT last_sent_at FROM ops_thread_watermark WHERE thread_id = ?",
                          [th["thread_id"]]).fetchone()
         since = wm[0] if wm else None
-        msgs = sorted(mailbox.list_thread_messages(th["thread_id"]), key=lambda m: (m.sent_at, m.message_id))
+        msgs = sorted(mailbox.list_thread_messages(th["thread_id"], th["buyer_email"]),
+                      key=lambda m: (m.sent_at, m.message_id))
         new = [m for m in msgs if since is None or m.sent_at > since]
         items = rows(con, "SELECT i.* FROM ops_outreach_item i JOIN ops_outreach o USING (outreach_id) "
                           "WHERE o.lifnr = ? ORDER BY matnr", [th["lifnr"]])
@@ -292,7 +294,7 @@ def _persist(con, cfg, th, m: Message, ex: Extraction, commitments, review, reas
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [cfg.client_id, m.message_id, th["thread_id"], th["lifnr"], ex.category, ex.summary,
              ex.instructions_to_ai_detected, review, json.dumps(reasons), ex.classifier])
-        insert_many(con, 
+        insert_many(con,
             "INSERT INTO ops_reply_commitment VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(cfg.client_id, m.message_id, c["matnr"], c["confirmed_qty"], c["ship_date"],
               c["constraint_note"], c["matched_outreach"]) for c in commitments])

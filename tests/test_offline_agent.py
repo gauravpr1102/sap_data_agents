@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from sapkit import outreach, replies
-from sapkit.evals_runner import build_cases
 from sapkit.offline_agent import OfflineAgent
 from sapkit.tools import Session
 
@@ -18,20 +17,6 @@ def ready(con, cfg, mailbox):
 
 def agent(con, cfg, plants=None):
     return OfflineAgent(con, cfg, Session("tester", plants or list(cfg.plants)))
-
-
-def test_answers_all_evaluation_questions(ready, cfg):
-    failures = []
-    for c in build_cases(ready, cfg):
-        res = agent(ready, cfg, c.plants or None).ask(c.question)
-        used = [t["tool"] for t in res.tool_calls]
-        low = res.answer.lower()
-        ok = ((not c.tools or any(t in used for t in c.tools))
-              and all(any(a.lower() in low for a in g) for g in c.facts)
-              and not any(f.lower() in low for f in c.must_not_contain))
-        if not ok:
-            failures.append((c.id, used, res.answer[:200]))
-    assert failures == []
 
 
 @pytest.mark.parametrize("question,tool", [

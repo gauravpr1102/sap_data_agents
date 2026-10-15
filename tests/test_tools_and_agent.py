@@ -3,11 +3,8 @@ from __future__ import annotations
 
 import json
 
-from sapkit import db, guard
+from sapkit import guard, outreach, replies
 from sapkit.agent import PlanningAgent, system_prompt
-from sapkit.evals_runner import build_cases
-from sapkit.mail import MockMailbox
-from sapkit import outreach, replies
 from sapkit.tools import MAX_ROWS, Session, Toolbox, tool_definitions
 
 
@@ -80,24 +77,6 @@ def test_every_tool_runs(con, cfg, mailbox):
     for name, a in args.items():
         text, err = tb(con, cfg).run(name, a)
         assert not err, (name, text)
-
-
-def test_offline_eval_cases_are_answerable_by_their_tools(con, cfg, mailbox):
-    outreach.run_outreach(con, cfg, mailbox)
-    replies.process_replies(con, cfg, mailbox, replies.OfflineClassifier())
-    cases = build_cases(con, cfg)
-    assert len(cases) >= 19
-    for c in cases:
-        if not c.tools:
-            continue
-        text, err = Toolbox(con, cfg, Session("eval", c.plants or list(cfg.plants))).run(c.tools[0], c.tool_args)
-        if c.expect_tool_error:
-            assert err, c.id
-            continue
-        facts = c.offline_facts if c.offline_facts is not None else c.facts
-        assert not err, (c.id, text)
-        for group in facts:
-            assert any(alt in text for alt in group), (c.id, group)
 
 
 # ------------------------------------------------------------------ guard

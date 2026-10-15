@@ -9,3 +9,7 @@ out/
 .venv/
 # Written by setup_and_run with this machine's Python path
 .mcp.json
+.terraform/
+*.tfstate*
+*.tfvars
+!*.tfvars.example

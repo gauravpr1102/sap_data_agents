@@ -1,0 +1,5 @@
+project_id   = "client-sapkit-stage"
+environment  = "stage"
+client_id    = "acme"
+image        = "us-central1-docker.pkg.dev/client-sapkit-stage/sapkit-stage/sapkit:0.2.0"
+iap_members  = ["group:sap-planning-pilot@client.example"]

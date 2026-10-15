@@ -194,7 +194,7 @@ def connect(cfg: ClientConfig, db_path: str | Path | None = None, read_only: boo
 def rows(con: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> list[dict]:
     cur = con.execute(sql, params or [])
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
 
 
 def insert_many(con: duckdb.DuckDBPyConnection, sql: str, params: list) -> None:

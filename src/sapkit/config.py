@@ -52,7 +52,7 @@ class ClientConfig:
             node = node[k]
         return node
 
-    def with_overrides(self, **top_level: Any) -> "ClientConfig":
+    def with_overrides(self, **top_level: Any) -> ClientConfig:
         raw = {**self.raw, **top_level}
         return ClientConfig(raw=raw, path=self.path)
 
@@ -62,5 +62,5 @@ def load_config(path: str | Path | None = None) -> ClientConfig:
     with open(p, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     cfg = ClientConfig(raw=raw, path=p)
-    cfg.cover_rule  # validate early
+    _ = cfg.cover_rule  # validate early
     return cfg

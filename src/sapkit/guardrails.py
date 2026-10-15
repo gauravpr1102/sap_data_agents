@@ -40,6 +40,14 @@ _INJECTION_PATTERNS = [
     r"act as (if you were )?(an? )?(admin|administrator|root)",
     r"(bypass|override|disable) (the )?(rbac|access control|permissions|guardrails|security)",
     r"i am (the |an )?(admin|administrator|ceo|owner).{0,40}(show|give|grant).{0,30}(all|every)",
+    r"(ignore|bypass|override|remove|lift) (my |the |all |these |any )?(\w+ )?(restrictions|limits|scope|permissions)",
+]
+# Text that looks like an attempt to inject SQL through a question. The tools bind
+# every parameter, so this can't reach the database anyway; refusing it early is
+# defence in depth and keeps such attempts visible in the audit log.
+_SQLI_PATTERNS = [
+    r"'\s*or\s*'?\d*'?\s*=\s*'?\d", r";\s*(drop|delete|update|insert|alter|truncate)\s",
+    r"\bunion\s+(all\s+)?select\b", r"--\s*$", r"/\*.*\*/", r"\bxp_cmdshell\b",
 ]
 _PII_PATTERNS = {
     "payment card number": r"\b(?:\d[ -]?){13,16}\b",
@@ -87,7 +95,7 @@ class HttpContentFilter:
             r = httpx.post(self.url, json={"text": text, "direction": direction}, timeout=self.timeout)
             r.raise_for_status()
             body = r.json()
-        except Exception as e:  # fail closed: no screening, no answer
+        except Exception as e:  # noqa: BLE001 - fail closed on any screening failure
             return GuardResult(False, f"content filter unavailable ({type(e).__name__})", "content_filter")
         if body.get("allowed", False):
             return ALLOW
@@ -109,6 +117,8 @@ def screen_input(text: str, content_filter: ContentFilter | None = None) -> Guar
     hits = [p for p in _INJECTION_PATTERNS if re.search(p, low)]
     if hits:
         return GuardResult(False, "the question tries to change the assistant's rules or access", "injection", hits)
+    if any(re.search(p, low) for p in _SQLI_PATTERNS):
+        return GuardResult(False, "the question contains what looks like a database command", "sql_injection")
     pii = [name for name, p in _PII_PATTERNS.items() if re.search(p, text)]
     if pii:
         return GuardResult(False, f"the question contains what looks like a {pii[0]}; please remove it",

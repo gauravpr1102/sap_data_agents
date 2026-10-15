@@ -38,7 +38,7 @@ class Message:
 
 class MailAdapter(Protocol):
     def create_draft(self, draft: Draft, vendor: str) -> DraftReceipt: ...
-    def list_thread_messages(self, thread_id: str) -> list[Message]: ...
+    def list_thread_messages(self, thread_id: str, buyer: str | None = None) -> list[Message]: ...
 
 
 class MockMailbox:
@@ -82,7 +82,7 @@ class MockMailbox:
         threads = [(v["seq"], t) for t, v in self.state["threads"].items() if v["vendor"] == vendor]
         return min(threads)[1] if threads else None
 
-    def list_thread_messages(self, thread_id: str) -> list[Message]:
+    def list_thread_messages(self, thread_id: str, buyer: str | None = None) -> list[Message]:
         info = self.state["threads"].get(thread_id)
         if not info or self._first_thread(info["vendor"]) != thread_id:
             return []

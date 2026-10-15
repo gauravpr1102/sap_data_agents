@@ -1,0 +1,29 @@
+# Live-model evals: the same 41 cases through Claude, with an answer-quality judge.
+# Run on demand and before every release. Needs ANTHROPIC_API_KEY (or switch
+# llm.provider to vertex and give the runner Google credentials).
+name: live-evals
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - run: python -m sapkit generate --materials 1500 --seed 7
+      - run: python -m sapkit eval --runner api --judge
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-eval-report
+          path: out/evals/

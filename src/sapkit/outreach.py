@@ -7,7 +7,6 @@ creates a second draft.
 """
 from __future__ import annotations
 
-import datetime as dt
 import hashlib
 import uuid
 from collections import defaultdict
@@ -133,7 +132,7 @@ def run_outreach(con: duckdb.DuckDBPyConnection, cfg: ClientConfig, mailbox: Mai
     decisions = decide_all(con, cfg, plants)
     con.execute("BEGIN")
     try:
-        insert_many(con, 
+        insert_many(con,
             "INSERT INTO ops_disposition VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [(run_id, d["matnr"], d["werks"], d["change_rank"], d["disposition"], d["reason"],
               d["resolved_vendor"], d["ekgrp"]) for d in decisions])
@@ -167,7 +166,7 @@ def run_outreach(con: duckdb.DuckDBPyConnection, cfg: ClientConfig, mailbox: Mai
                     [key, cfg.client_id, first["capture_prev"], first["capture_cur"], lifnr, ekgrp,
                      cfg.get("outreach", "template_version"), first["buyer_email"], first["vendor_email"],
                      receipt.thread_id, receipt.draft_ref, len(items)])
-                insert_many(con, 
+                insert_many(con,
                     "INSERT INTO ops_outreach_item VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     [(key, i["matnr"], i["werks"], i["window_"], i["prior_qty"], i["current_qty"],
                       i["change_pct"], i["change_rank"]) for i in items])
