@@ -134,7 +134,7 @@ class Toolbox:
             r["plant_name"] = names[r["plant"]]
         return self._envelope(data, len(data))
 
-    def get_shortage_queue(self, plant: str, within_days: int, limit: int) -> dict:
+    def get_shortage_queue(self, plant: str, within_days: int = 0, limit: int = 10) -> dict:
         plant = self._plant(plant)
         limit = max(1, min(int(limit), MAX_ROWS))
         where = "werks = ?"
@@ -182,7 +182,7 @@ class Toolbox:
             "open_purchase_orders": [{k: _jsonable(v) for k, v in p.items()} for p in pos[:MAX_ROWS]],
         }
 
-    def get_missing_asn(self, plant: str, limit: int) -> dict:
+    def get_missing_asn(self, plant: str, limit: int = 10) -> dict:
         plant = self._plant(plant)
         limit = max(1, min(int(limit), MAX_ROWS))
         total = self.con.execute("SELECT count(*) FROM v_missing_asn WHERE werks = ?", [plant]).fetchone()[0]
@@ -193,7 +193,7 @@ class Toolbox:
                                  ORDER BY days_past_ship_by DESC, ebeln LIMIT ?""", [plant, limit])
         return self._envelope(data, total, plant=plant)
 
-    def get_safety_stock_dips(self, plant: str, limit: int) -> dict:
+    def get_safety_stock_dips(self, plant: str, limit: int = 10) -> dict:
         plant = self._plant(plant)
         limit = max(1, min(int(limit), MAX_ROWS))
         total = self.con.execute("SELECT count(*) FROM v_safety_stock_dip WHERE werks = ?", [plant]).fetchone()[0]
@@ -203,10 +203,10 @@ class Toolbox:
                                  ORDER BY first_dip_date, matnr LIMIT ?""", [plant, limit])
         return self._envelope(data, total, plant=plant)
 
-    def get_forecast_changes(self, plant: str, ranks: list[int], limit: int) -> dict:
+    def get_forecast_changes(self, plant: str, ranks: list[int] | None = None, limit: int = 10) -> dict:
         plant = self._plant(plant)
         limit = max(1, min(int(limit), MAX_ROWS))
-        ranks = [int(r) for r in ranks if 1 <= int(r) <= 7] or [1, 2, 3, 4, 5, 6, 7]
+        ranks = [int(r) for r in (ranks or []) if 1 <= int(r) <= 7] or [1, 2, 3, 4, 5, 6, 7]
         ph = ",".join("?" * len(ranks))
         total = self.con.execute(f"SELECT count(*) FROM v_forecast_change WHERE werks = ? AND change_rank IN ({ph})",
                                  [plant, *ranks]).fetchone()[0]
@@ -255,7 +255,7 @@ class Toolbox:
         p["note"] = "Preview only. Nothing is created or sent by this tool; the buyer sends."
         return p
 
-    def get_drafts_for_review(self, status: str, limit: int) -> dict:
+    def get_drafts_for_review(self, status: str = "PENDING_REVIEW", limit: int = 10) -> dict:
         from .workflow import STATUSES, review_queue
         if status not in STATUSES:
             raise ToolError(f"Status must be one of {', '.join(STATUSES)}.")
@@ -265,7 +265,7 @@ class Toolbox:
         return self._envelope(data, total, status=status,
                               note="Approve, edit or hold drafts with `sapkit drafts`; the buyer sends them.")
 
-    def get_supplier_replies(self, vendor: str, category: str, needs_review_only: bool) -> dict:
+    def get_supplier_replies(self, vendor: str = "", category: str = "", needs_review_only: bool = False) -> dict:
         where, params = ["1=1"], []
         if vendor:
             where.append("r.lifnr = ?")

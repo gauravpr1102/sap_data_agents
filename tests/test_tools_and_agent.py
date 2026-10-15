@@ -43,8 +43,12 @@ def test_row_cap_and_total_matching(con, cfg):
 
 
 def test_bad_arguments_return_an_error_not_a_crash(con, cfg):
-    text, err = tb(con, cfg).run("get_shortage_queue", {"plant": "1000"})
+    text, err = tb(con, cfg).run("get_shortage_queue", {"limit": 5})  # plant is required
     assert err and "bad arguments" in json.loads(text)["error"]
+    text, err = tb(con, cfg).run("get_shortage_queue", {"plant": "1000", "sql": "DROP TABLE marc"})
+    assert err and "bad arguments" in json.loads(text)["error"]
+    # Optional arguments may be left out by MCP clients.
+    assert not tb(con, cfg).run("get_shortage_queue", {"plant": "1000"})[1]
     text, err = tb(con, cfg).run("drop_tables", {})
     assert err
 

@@ -114,12 +114,10 @@ def run(cfg: ClientConfig, runner: str = "offline", judge: bool = False, limit: 
     if limit:
         cases = cases[:limit]
     run_fn = RUNNERS[runner]
-    quality = None
+    judge_model = None
     if judge:
-        import os
-
-        from .judge import ApiJudge, ClaudeCodeJudge, quality_metric
-        quality = quality_metric(ApiJudge() if os.environ.get("ANTHROPIC_API_KEY") else ClaudeCodeJudge())
+        from .judge import ApiJudge, ClaudeCodeJudge
+        judge_model = ApiJudge() if os.environ.get("ANTHROPIC_API_KEY") else ClaudeCodeJudge()
     results = []
     for c in cases:
         if c.get("skip"):
@@ -129,7 +127,8 @@ def run(cfg: ClientConfig, runner: str = "offline", judge: bool = False, limit: 
         tc = LLMTestCase(
             input=c["question"], actual_output=obs.answer or "",
             tools_called=[ToolCall(name=t) for t in obs.tools],
-            retrieval_context=obs.tool_outputs[:5] or None,
+            # The judge always gets a context: "no tool output" lets it penalise unsupported figures.
+            retrieval_context=obs.tool_outputs[:5] or ["(no tool output in this answer)"],
             metadata={"expected_tools": c.get("tools") or [], "fact_groups": c["fact_groups"],
                       "must_not": c["must_not_resolved"], "outcome": c.get("outcome", "answered"),
                       "blocked": obs.blocked, "refused": obs.refused, "tool_errors": obs.tool_errors,
@@ -140,7 +139,9 @@ def run(cfg: ClientConfig, runner: str = "offline", judge: bool = False, limit: 
             metric = M()
             metric.measure(tc)
             scores[metric.__name__] = {"pass": metric.is_successful(), "reason": metric.reason}
-        if quality is not None and obs.answer:
+        if judge_model is not None and obs.answer:
+            from .judge import quality_metric
+            quality = quality_metric(judge_model)  # a fresh metric per case: errors must not carry over
             try:
                 quality.measure(tc)
                 scores["Answer quality"] = {"pass": bool(quality.is_successful()), "score": quality.score,

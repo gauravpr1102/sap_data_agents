@@ -261,11 +261,15 @@ def cmd_demo(args):
 
 
 def cmd_mcp(args):
-    from .mcp_server import main as mcp_main
     if args.plants:
         os.environ["SAPKIT_PLANTS"] = args.plants
     os.environ["SAPKIT_USER"] = args.user or os.environ.get("SAPKIT_USER") or DEFAULT_USER
-    mcp_main(args.config)
+    if args.sdk:  # the official MCP SDK server: same tools, slower to start
+        from .mcp_server import main as mcp_main
+        mcp_main(args.config)
+    else:
+        from .mcp_stdio import serve
+        serve(args.config)
 
 
 def cmd_eval(args):
@@ -371,6 +375,7 @@ def main(argv=None):
 
     m = sub.add_parser("mcp", help="serve the nine tools over MCP (stdio) for Claude Code / Claude Desktop")
     m.add_argument("--plants")
+    m.add_argument("--sdk", action="store_true", help="use the official MCP SDK server (slower start)")
     m.set_defaults(func=cmd_mcp)
 
     sub.add_parser("verify", help="check every rule against the answers built into the data").set_defaults(func=cmd_verify)
