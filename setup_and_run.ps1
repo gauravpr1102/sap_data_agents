@@ -49,7 +49,9 @@ Step "Running the end-to-end demo (outreach, replies, rerun)" { & $venvPy -m sap
 Step "Writing the report" { & $venvPy -m sapkit report }
 
 # Let Claude Code use the tools when it is opened in this folder (no API key needed).
-$mcpJson = '{"mcpServers": {"sapkit": {"command": "' + ($venvPy.Replace('\', '/')) + '", "args": ["-m", "sapkit", "mcp"]}}}'
+# The tools act as SAPKIT_USER (default: the demo purchasing manager); change it to try other roles.
+$mcpUser = if ($env:SAPKIT_USER) { $env:SAPKIT_USER } else { "morgan.manager@acme-dummy.example" }
+$mcpJson = '{"mcpServers": {"sapkit": {"command": "' + ($venvPy.Replace('\', '/')) + '", "args": ["-m", "sapkit", "mcp"], "env": {"SAPKIT_USER": "' + $mcpUser + '"}}}}'
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot ".mcp.json"), $mcpJson, (New-Object Text.UTF8Encoding $false))
 
 Write-Host ""

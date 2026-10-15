@@ -40,7 +40,9 @@ step "Writing the report"
 PYPATH="$(pwd)/$VPY"
 # Git Bash on Windows: Claude Code needs C:/... rather than /c/...
 if command -v cygpath >/dev/null 2>&1; then PYPATH="$(cygpath -m "$PYPATH")"; fi
-printf '{"mcpServers": {"sapkit": {"command": "%s", "args": ["-m", "sapkit", "mcp"]}}}\n' "$PYPATH" > .mcp.json
+# The tools act as SAPKIT_USER (default: the demo purchasing manager); change it to try other roles.
+MCP_USER="${SAPKIT_USER:-morgan.manager@acme-dummy.example}"
+printf '{"mcpServers": {"sapkit": {"command": "%s", "args": ["-m", "sapkit", "mcp"], "env": {"SAPKIT_USER": "%s"}}}}\n' "$PYPATH" "$MCP_USER" > .mcp.json
 
 echo
 echo "Setup complete."

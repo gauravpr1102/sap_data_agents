@@ -234,3 +234,83 @@ Details:
 Checked live: Claude Code (`claude -p` with only this server allowed) answered
 "what's short at plant 1000 this week, and why?" from the tools, with no API
 key. Every figure in its answer matched the data.
+
+---
+
+# Version 0.2: production hardening
+
+## D24 · RBAC from a reviewed file, enforced at five layers
+
+**Options.**
+- Roles in a database table edited through an admin UI.
+- Roles in `config/rbac.yaml`, reviewed like code.
+
+**Decision.** The YAML file. Access changes then get the same review, history
+and rollback as code, and the CLI (`sapkit users`) edits it with an audit
+record. Enforcement happens at five layers:
+1. identity;
+2. the tool list given to the model;
+3. `Toolbox.run`;
+4. per-user filtered views (BigQuery row access policies in production);
+5. the workflow.
+
+The point is that a bug in one layer doesn't expose data.
+
+## D25 · Guardrails in code, around the model
+
+The rules that must always hold (scope, grounding, no prices, no personal data,
+no prompt injection) are enforced in code before and after the model, not only
+in the prompt. A figure in an answer that no tool returned gets one retry, then
+the answer is held back. The content-filter hook fails closed.
+
+## D26 · Evals on DeepEval with deterministic metrics, judged quality optional
+
+**Options.**
+- DeepEval's built-in LLM metrics.
+- Promptfoo for everything.
+- Custom deterministic metrics on DeepEval's test-case model.
+
+**Decision.** Custom deterministic metrics: tool use, facts, forbidden content
+and outcome. DeepEval 4's built-in tool-correctness metric requires an OpenAI
+key even for a plain comparison, and CI must not need any key. Answer quality
+uses DeepEval's G-Eval with Claude as the judge, through Claude Code (no key) or
+the API. Promptfoo does the red team, with every attack written out so no
+remote generation is used. Opik is the optional trace store.
+
+## D27 · A small built-in stdio MCP server instead of the SDK at runtime
+
+The MCP SDK takes 5-13 s to import. Claude Code in print mode stopped waiting
+first on some runs, Claude got no tools, and on one run it invented an
+answer. `mcp_stdio.py` answers `initialize` in about 0.5 s and connected on every
+test run. It's tested with the official MCP client. The SDK server remains
+available (`sapkit mcp --sdk`).
+
+## D28 · Claude on Vertex AI as the production model endpoint
+
+The client's Google Cloud IAM, billing and data terms apply, and no Anthropic
+key exists to rotate or leak. Server-side refusal fallbacks are a Claude API
+feature, so they're switched off on Vertex (the agent handles a refusal itself).
+
+## D29 · BigQuery SQL generated from the one rule file
+
+**Options.**
+- Hand-maintain a BigQuery copy of the views.
+- Generate it.
+
+**Decision.** Generate it with sqlglot from `sql/views.sql`. Date-plus-interval
+arithmetic is rewritten to `DATE_ADD` / `DATE_SUB`, so BigQuery keeps DATE types.
+Every statement is parsed back as BigQuery SQL before it's written. Row access
+policies are generated from `rbac.yaml`.
+
+## D30 · Pilot runs on DuckDB in Cloud Run; production moves ops to BigQuery
+
+A single Cloud Run instance with the DuckDB file on a Cloud Storage volume is
+enough for a pilot and needs no new code. Scaling out needs the ops tables in
+BigQuery. The SQL and policies for that are generated already; the runtime
+backend is the next step (DEPLOYMENT.md).
+
+## D31 · Web front end with IAP identity
+
+FastAPI behind Google IAP. The user is the identity IAP asserts, and Cloud Run
+accepts traffic only from the load balancer. A cookie login exists for local
+demos and is disabled when `SAPKIT_AUTH=iap`.

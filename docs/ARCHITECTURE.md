@@ -1,10 +1,9 @@
 # Architecture
 
-This kit rebuilds the five SAP planning and procurement use cases of the earlier
-Gemini-based reference implementation on Claude, for a dummy SAP client
-("Acme Precision Manufacturing"). It is meant as a reusable starting point: a
-new SAP client should mostly change `config/<client>.yaml` and the data
-mapping, not the code.
+Five SAP planning and procurement use cases, built as a governed agent on
+Claude, for a dummy SAP client (Acme Precision Manufacturing). It is meant as
+a reusable product: a new SAP client changes configuration, data mapping and
+users, not code.
 
 ## The one rule everything follows
 
@@ -12,101 +11,88 @@ mapping, not the code.
 
 Claude reads the question, picks a tool, explains the rows it gets back, and
 classifies supplier replies. It never computes a balance, a percentage, a rank
-or a recipient. Those come from SQL views and deterministic Python, which are
-tested against known answers.
+or a recipient. Those come from SQL views and deterministic Python that are
+tested against known answers. The guardrails check that every number in an
+answer came from a tool.
 
 ## Layers
 
 ```
-            ┌──────────────────────────────────────────────────────────┐
- Interface  │ CLI (sapkit ask / query / outreach / replies / report)   │
-            └───────────────┬──────────────────────────────────────────┘
-                            │ question + user scope (allowed plants)
-            ┌───────────────▼──────────────────────────────────────────┐
- Agent      │ agent.py   Claude API tool loop (claude-opus-5-5)        │
-            │ offline_agent.py  same tools, rule routing, no key       │
-            │            system prompt = domain pack (domain/*.md)     │
-            │ guard.py   blocks tables no tool produced this turn      │
-            └───────────────┬──────────────────────────────────────────┘
-                            │ tool_use (strict JSON schemas)
-            ┌───────────────▼──────────────────────────────────────────┐
- Tools      │ tools.py   9 governed tools; plant scope enforced here,  │
-            │            row caps, as-of date + match count on results │
-            └───────────────┬──────────────────────────────────────────┘
-                            │ parameterised SQL only
-            ┌───────────────▼──────────────────────────────────────────┐
- Rules      │ sql/views.sql  scope, supply, projection, shortage,      │
-            │                missing ASN, forecast six-box, suppliers  │
-            │ outreach.py    eligibility + reason codes, idempotent    │
-            │ replies.py     tracked threads, watermark, persistence   │
-            └───────────────┬──────────────────────────────────────────┘
-                            │
-            ┌───────────────▼──────────────────────────────────────────┐
- Data       │ DuckDB file: SAP-shaped raw tables (MARA, MARC, MARD,    │
-            │ MBEW, EKKO, EKPO, EKET, EKES, EORD, RESB, LFA1, ADR6,    │
-            │ T024, forecast snapshots) + ops tables (audit, drafts,   │
-            │ reply extracts, watermarks)                              │
-            └──────────────────────────────────────────────────────────┘
- Mail       mail.py  MailAdapter interface; MockMailbox for the dummy
-            client (drafts written to out/drafts, replies from data/)
+            ┌────────────────────────────────────────────────────────────────────┐
+ Front ends │ Web app (FastAPI, IAP sign-in)  ·  CLI  ·  Claude Code/Desktop (MCP) │
+            └───────────────┬────────────────────────────────────────────────────┘
+                            │ identity (IAP header / --user / SAPKIT_USER)
+            ┌───────────────▼────────────────────────────────────────────────────┐
+ Access     │ rbac.py: roles → plants, purchasing groups, tools, actions         │
+            │          deny by default; unknown user = nothing                    │
+            └───────────────┬────────────────────────────────────────────────────┘
+            ┌───────────────▼────────────────────────────────────────────────────┐
+ Agent      │ guardrails.py  input screen · content-filter hook · budgets         │
+            │ agent.py       Claude tool loop (API or Vertex AI) · offline agent  │
+            │ guard / figure grounding · disclosure checks · telemetry trace     │
+            └───────────────┬────────────────────────────────────────────────────┘
+                            │ tool calls (strict schemas; only the role's tools)
+            ┌───────────────▼────────────────────────────────────────────────────┐
+ Tools      │ tools.py  10 governed tools · scope check · arg limits · audit      │
+            │ mcp_stdio.py  the same tools over MCP (like an MCP Toolbox)        │
+            └───────────────┬────────────────────────────────────────────────────┘
+            ┌───────────────▼────────────────────────────────────────────────────┐
+ Rules      │ sql/views.sql  rules filled from config + per-user row filters      │
+            │ outreach.py · workflow.py · replies.py · dq.py                      │
+            └───────────────┬────────────────────────────────────────────────────┘
+            ┌───────────────▼────────────────────────────────────────────────────┐
+ Data       │ raw SAP tables (loader + data contract) · ops tables (audit, trace, │
+            │ drafts, reviews, replies, follow-ups, DQ results)                   │
+            │ DuckDB locally / pilot  →  BigQuery views + row access policies     │
+            └────────────────────────────────────────────────────────────────────┘
+ Mail       mail.py interface: mock mailbox, Gmail, Outlook (drafts only, no send)
 ```
 
-## Data flow per use case
+## The five use cases
 
 | # | Use case | Path |
 |---|---|---|
-| 1 | Shortage intelligence | question → Claude → `get_shortage_queue` / `get_shortage_detail` / `get_missing_asn` → `v_shortage` / `v_missing_asn` → answer with as-of date |
-| 2 | Forecast-change prioritisation | `v_forecast_change` compares two snapshot captures, splits inside/outside lead time, assigns ranks 1–7 |
-| 3 | Supplier resolution & eligibility | `v_supplier_candidates` + `outreach.decide()` → one disposition and reason code per material-plant |
-| 4 | Buyer-approved drafting | eligible items grouped per vendor + buyer → template render → `MailAdapter.create_draft` (idempotent key) → audit row. The buyer sends; the kit never does |
-| 5 | Reply intelligence | tracked threads only → new messages after watermark → Claude structured-output classification → validation → idempotent persist → watermark advances only after persist |
+| 1 | Shortage intelligence | question → agent → `get_shortage_queue` / `get_shortage_detail` / `get_missing_asn` / `get_safety_stock_dips` → scoped rule views → answer with as-of date |
+| 2 | Forecast-change prioritisation | `v_forecast_change` compares two snapshots, splits inside/outside lead time, ranks 1–7 |
+| 3 | Supplier resolution & eligibility | `v_supplier_candidates` + `outreach.decide()` → one outcome and reason per item |
+| 4 | Buyer-approved drafting | grouped per vendor and buyer → template (no prices) → mail adapter draft → review workflow (pending → approved / on hold → sent) |
+| 5 | Reply intelligence | tracked threads only → new messages after watermark → Claude structured-output classification (no tools) → validation → idempotent persist → follow-up ladder |
+
+## Three ways in, one set of tools
+
+| Front end | Model | Guardrails | Who it's for |
+|---|---|---|---|
+| Web app / API agent | Claude via API or Vertex AI | All layers | Business users |
+| Offline agent (no key) | Rules route to tools | All layers | Demos, CI, environments without a model |
+| Claude Code / Desktop over MCP | Claude on the user's login | RBAC, scope, arguments, audit (server-side) | Analysts, pilots |
 
 ## Where client differences live
 
-| Moving part | Where it is configured |
+| Moving part | Where |
 |---|---|
-| Scope (procurement type, MRP type, status, horizon) | `scope:` in the config |
-| Cover rule (ASN-only vs all open POs) | `cover_rule:` |
-| ASN control key, transit default | `asn:` |
-| Forecast thresholds, draftable ranks | `forecast:` |
-| Exclusions (material groups, interplant vendors), VMI | `outreach:` + `zvmi` table |
-| Field mapping from a real extract | `synth.py` is the reference for the target table shapes; a real client needs a loader into the same shapes |
+| Plants, scope, cover rule, thresholds, exclusions | `config/<client>.yaml` |
+| Users and roles | `config/rbac.yaml` |
+| SAP extract | Data contract → `sapkit load` |
+| Model endpoint | `llm.provider` (anthropic / vertex) |
+| Mailbox | Gmail or Outlook adapter + per-buyer consent |
+| Cloud | `deploy/terraform` variables |
 
-## Security and safety properties
+## Mapping to the reference build
 
-- **Read-only to SAP.** Nothing writes to SAP tables. Writes go only to the ops tables (audit, drafts, reply extracts, watermarks).
-- **Scope from identity, not from the model.** The allowed plants come from the caller's session; a tool refuses any other plant even if Claude asks for it.
-- **Supplier email is untrusted data.** Reply classification runs with no tools at all, so text inside an email can't trigger an action. The schema also records whether a reply contained instructions aimed at the AI.
-- **Idempotent writes.** Drafts are keyed by client, snapshot pair, vendor, buyer and template version; replies by client and message ID. A rerun creates nothing new.
-- **Watermark after persistence.** If the write fails, the watermark doesn't move, so the next run retries the same messages.
-- **No pricing in supplier emails**, enforced in the template code, not only in the prompt.
-
-See `docs/DECISIONS.md` for why each choice was made.
-
-## Three ways to reach the same tools
-
-| Front end | Model | Needs | Command |
-|---|---|---|---|
-| Claude API agent | Claude (`claude-opus-5-5`) | `ANTHROPIC_API_KEY` | `sapkit ask` |
-| Claude Code / Claude Desktop over MCP | Claude, on the user's own Claude login | Claude Code or Desktop installed | `claude` in the kit folder (setup writes `.mcp.json`) |
-| Offline agent | none: rules route the question | nothing | `sapkit ask` without a key |
-
-All three call the same nine tools, so plant scope, row caps, as-of dates and
-the audit log behave identically. Only the reasoning in front of the tools
-changes.
-
-## Mapping to the reference architecture
-
-The kit keeps the shape of the production reference build. Only the platform
-under each layer is lighter.
+The kit keeps the shape of the production reference build; only the platform
+under each layer is lighter for the pilot.
 
 | Reference build (production) | This kit | Same principle |
 |---|---|---|
-| SAP → BigQuery `sap_raw_data` (BODS, read-only) | SAP-shaped raw tables in DuckDB | SAP is the system of record; nothing writes back |
-| Curated views in `mm` | `sql/views.sql` (temp views from config) | Business rules live once, in reviewed SQL |
-| `ops` dataset (`agent_audit_log`, `vendor_comm_log`) | `ops_*` tables | Append-only audit; the only writes |
-| MCP Toolbox on Cloud Run, allow-listed toolsets | `tools.py`, served in-process and over MCP (`sapkit mcp`) | Agents only reach data through named, parameterised tools |
-| Agent Engine (ADK + Gemini) | Claude tool loop (`agent.py`), or Claude Code over MCP | The model handles language; tools establish facts |
-| Gemini Enterprise UI | CLI, Claude Code or Claude Desktop | Users ask in plain language |
-| Eval gate (≥30 scenarios, 95%) | `sapkit eval` (20 questions) + 67 tests + `verify` | Nothing ships without passing known answers |
-| Buyer approves every send; Gmail drafts | Mock mailbox drafts; buyer sends | No autonomous sending |
+| SAP → BigQuery raw dataset (read-only) | Raw SAP tables; BigQuery raw dataset in Terraform | SAP is the system of record; nothing writes back |
+| Curated views | `sql/views.sql`, also generated as BigQuery views | Business rules live once, in reviewed SQL |
+| Ops dataset (audit, comm log) | `ops_*` tables; BigQuery ops dataset in Terraform | Append-only audit; the only writes |
+| MCP Toolbox on Cloud Run | `tools.py` + `sapkit mcp` | Agents only reach data through named, parameterised tools |
+| Agent Engine (ADK + Gemini) | Claude tool loop; Claude on Vertex AI | The model handles language; tools establish facts |
+| Gemini Enterprise UI | Web app behind IAP; Claude Code/Desktop | Users ask in plain language |
+| Eval gate (≥30 scenarios, 95%) | 41 cases, 95% + all security/RBAC; Promptfoo red team; 125+ tests | Nothing ships without passing known answers |
+| Buyer approves every send | Review workflow; adapters can't send | No autonomous sending |
+| IAM, Secret Manager, Model Armor | IAP + RBAC + row access policies; Secret Manager; content-filter hook | Defence in depth |
+
+See SECURITY.md, EVALS.md, DATA_CONTRACT.md, DEPLOYMENT.md, OPERATIONS.md and
+DECISIONS.md for each area.

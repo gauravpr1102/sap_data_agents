@@ -1,134 +1,108 @@
-# SAP planning agents on Claude: dummy client kit
+# SAP planning agents on Claude
 
-Five SAP planning and procurement use cases, rebuilt on Claude for a dummy SAP
-client, **Acme Precision Manufacturing** (three plants, 15,000 material-plants
-of synthetic SAP data by default).
+A governed AI assistant for SAP planners, buyers and purchasing managers, built
+on Claude and shown on a dummy SAP client, **Acme Precision Manufacturing**
+(3 plants, 15,000 material-plants of SAP-shaped data).
 
-| # | Use case | What it does |
+| # | Use case | What a user gets |
 |---|---|---|
-| 1 | Shortage intelligence | Projects each material's balance over 105 days, ranks shortages by risk, flags late shipping notices and safety-stock dips |
-| 2 | Forecast-change prioritisation | Compares two forecast snapshots and ranks every change 1–7 by lead-time window and size |
-| 3 | Supplier resolution & eligibility | Decides who (if anyone) should be contacted for each change, with one reason per item |
-| 4 | Buyer-approved drafting | One combined draft per supplier and buyer, never sent automatically, never with prices |
-| 5 | Supplier reply intelligence | Reads tracked threads, classifies replies, extracts commitments, routes anything unclear to a buyer |
+| 1 | Shortage intelligence | Ranked shortages, why each part is short, late shipping notices, safety-stock dips |
+| 2 | Forecast-change prioritisation | Every forecast change ranked by lead time and size |
+| 3 | Supplier resolution & eligibility | Who to contact for each change, with one plain reason when it's no |
+| 4 | Buyer-approved drafting | One draft per supplier in the buyer's mailbox; approve / edit / hold; never auto-sent, never with prices |
+| 5 | Supplier reply intelligence | Replies classified, commitments extracted, unclear or risky ones sent to a buyer, follow-ups proposed |
 
-Claude (`claude-opus-5-5`) answers planners' questions through nine governed
-tools and classifies supplier replies. Every number comes from SQL; Claude never
-calculates one. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md).
+**What makes it production-grade:**
+- RBAC enforced at five layers;
+- guardrails in code: input screening, number grounding, no-pricing and personal-data checks, a content-filter hook;
+- human approval for every supplier e-mail;
+- a full audit log and per-question traces with cost;
+- a 41-case eval gate on DeepEval, plus a Promptfoo red team;
+- a data contract with data-quality checks;
+- Terraform for Google Cloud (Cloud Run + IAP + BigQuery + Claude on Vertex AI).
 
-## Quick start
+## Start here
 
-One command sets everything up and opens the planning assistant. No API key is needed.
+**One command** (Windows PowerShell, from the unzipped folder):
 
-**Windows (PowerShell):**
 ```
 powershell -ExecutionPolicy Bypass -File setup_and_run.ps1
 ```
 
-**macOS / Linux:**
-```
-bash setup_and_run.sh
-```
+**macOS / Linux:** `bash setup_and_run.sh`
 
-It creates a virtual environment, installs the kit, builds the dummy SAP data,
-checks every rule, runs the end-to-end demo and writes a report, then opens the
-assistant. Ask it things like:
+It installs everything, builds the dummy data, checks every business rule, runs
+the end-to-end demo and opens the assistant. No API key is needed.
 
-- What's short at plant 1000 this week?
-- Why is material 10000004 short?
-- Which purchase orders at plant 3000 should have shipped by now?
-- Which forecast changes at plant 2000 are the biggest?
-- How many supplier e-mails would go out for plant 1000?
-- Which supplier replies need my review?
+## Three ways to use it
 
-**Without a key, the assistant runs in offline mode.** It uses the same nine
-tools, the same data, the same plant-access rules and the same audit log, but
-picks the tool with simple rules instead of Claude. It answers all 20
-evaluation questions correctly, but it only understands planning questions phrased
-along those lines. With `ANTHROPIC_API_KEY` set, `ask` uses Claude instead.
+| How | Command | Needs |
+|---|---|---|
+| **Web app** | `python -m sapkit web`, then open http://127.0.0.1:8080 and sign in as a demo user | Nothing |
+| **Real Claude in Claude Code** | Run `claude` in this folder and approve the `sapkit` tools | Claude Code |
+| **Terminal assistant** | `python -m sapkit ask` | Nothing (offline mode); Claude with `ANTHROPIC_API_KEY` or Vertex AI |
 
-**To use real Claude without an API key:** if you have Claude Code, run `claude`
-in this folder after setup and approve the `sapkit` tools when asked. Claude then
-answers from the same tools using your own Claude login. (Claude Desktop works
-the same way: add the server from `.mcp.json` to its config.)
+Demo users (from `config/rbac.yaml`):
 
-Step by step, if you prefer:
+| User | Role | Sees |
+|---|---|---|
+| `morgan.manager@acme-dummy.example` | Purchasing manager (default) | All plants, all groups; runs jobs |
+| `avery.buyer@acme-dummy.example` | Buyer | Plant 1000, purchasing groups P01-P02 |
+| `jordan.planner@acme-dummy.example` | Planner | Plant 1000, shortages only |
+| `riley.planner@acme-dummy.example` | Planner | Plants 2000 and 3000 |
+| `casey.auditor@acme-dummy.example` | Auditor | Audit log and metrics |
+| `admin@acme-dummy.example` | Admin | Everything, including user and data admin |
 
-```bash
-pip install -e ".[dev]"
-python -m sapkit generate          # 15,000 material-plants of SAP-shaped data (~10 s)
-python -m sapkit verify            # every rule vs. the answers built into the data
-python -m sapkit demo --offline    # outreach -> replies -> rerun -> report
-python -m sapkit ask               # the assistant (offline without a key)
-python -m sapkit eval --agent      # 20 planner questions through the offline agent
-python -m pytest                   # 69 tests
-```
-
-With an Anthropic API key:
-
-```bash
-export ANTHROPIC_API_KEY=...       # PowerShell: $env:ANTHROPIC_API_KEY = "..."
-python -m sapkit ask "What's short at plant 1000 this week, and why?" --show-tools
-python -m sapkit replies           # classify replies with Claude instead of keywords
-python -m sapkit eval --live       # the 20 questions through the real Claude agent
-```
+Act as any of them with `--user`, e.g. `python -m sapkit ask --user avery.buyer@acme-dummy.example`.
+In Claude Code the tools act as the user named in `.mcp.json` (set `SAPKIT_USER` before running setup to change it).
 
 ## Commands
 
-| Command | Needs a key | What it does |
-|---|---|---|
-| `generate [--materials N] [--seed S]` | No | Build the dummy SAP database (`data/acme.duckdb`) and supplier mailbox |
-| `verify` | No | Check every rule against the answers the generator built in |
-| `query <tool> '<json args>' [--plants]` | No | Run one governed tool directly, exactly as the agent would |
-| `outreach [--plants] [--dry-run]` | No | Decide eligibility and write drafts to `out/drafts/` |
-| `replies [--offline]` | Optional | Process supplier replies; Claude if a key is set, keywords otherwise |
-| `report` | No | Write `out/report/summary.md` and CSV exports |
-| `demo [--offline] [--regenerate]` | Optional | All of the above, end to end, including a rerun that must create nothing new |
-| `ask ["question"] [--plants] [--offline] [--show-tools]` | Optional | The planning assistant: Claude with a key, offline rules without |
-| `eval [--agent] [--live]` | `--live` only | 20 evaluation questions: tool layer, offline agent (`--agent`) or Claude (`--live`) |
-| `mcp [--plants]` | No | Serve the nine tools over MCP for Claude Code / Claude Desktop |
-| `reset` | No | Clear drafts, mailbox state and ops tables |
+| Area | Command |
+|---|---|
+| Data | `generate`, `load <dir>`, `export <dir>`, `dq`, `verify`, `bigquery` |
+| Use | `ask`, `query <tool> '<json>'`, `web`, `mcp` |
+| Jobs | `outreach`, `replies`, `followups`, `demo`, `report` |
+| Review | `drafts list / show / approve / edit / hold / sent` |
+| Oversight | `audit`, `metrics`, `users list / show / add / remove` |
+| Quality | `eval [--runner offline\|claude-code\|api] [--judge]`, `pytest`, Promptfoo in `evals/redteam` |
 
-### Example tool queries
+Every command acts as a user and checks that user's permissions.
+
+## Testing
 
 ```bash
-python -m sapkit query get_shortage_summary
-python -m sapkit query get_shortage_queue '{"plant": "1000", "within_days": 7, "limit": 10}'
-python -m sapkit query get_shortage_detail '{"material": "10000004", "plant": "1000"}'
-python -m sapkit query get_missing_asn '{"plant": "2000", "limit": 10}'
-python -m sapkit query get_forecast_changes '{"plant": "3000", "ranks": [1, 3], "limit": 10}'
-python -m sapkit query get_outreach_status '{"plant": "2000"}'
-python -m sapkit query get_supplier_replies '{"vendor": "", "category": "", "needs_review_only": true}'
-python -m sapkit query get_shortage_queue '{"plant": "2000", "within_days": 7, "limit": 5}' --plants 1000   # refused
+python -m pytest                                   # 125+ tests
+python -m sapkit verify                            # rules vs. answers built into the data
+python -m sapkit eval                              # 41-case gate, offline agent
+python -m sapkit eval --runner claude-code         # same cases, real Claude, no API key
+cd evals/redteam && npx promptfoo eval             # 20-attack red team
 ```
+
+## Documentation
+
+| Doc | Covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, use-case paths, mapping to the reference build |
+| [docs/SECURITY.md](docs/SECURITY.md) | RBAC, guardrails, threat model, test results, residual risks |
+| [docs/EVALS.md](docs/EVALS.md) | Eval cases, DeepEval metrics, runners, gate, red team, tracing |
+| [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) | Extract format, validation, data-quality checks, onboarding a client |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Google Cloud deployment, pilot vs production, configuration |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Monthly cycle, monitoring, incidents, users, releases, cost |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Gmail, Outlook, SAP, Claude channels |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Every design decision, with the options considered |
+| [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) | Test rounds and results |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version |
 
 ## Layout
 
 ```
-config/acme.yaml      everything client-specific (scope, cover rule, thresholds, exclusions)
-domain/*.md           the planning knowledge Claude gets in its system prompt
-sql/views.sql         all business rules, filled in from the config
-src/sapkit/
-  synth.py            dummy SAP data with known answers
-  db.py               DuckDB connection, rule rendering, ops tables
-  tools.py            the nine governed tools + strict schemas
-  agent.py            Claude tool loop with grounding guard
-  offline_agent.py    rule-based agent over the same tools, for use without a key
-  mcp_server.py       the same tools over MCP (like the reference build's MCP Toolbox)
-  guard.py            blocks tables no tool produced
-  outreach.py         eligibility + drafting
-  replies.py          reply classification (Claude or offline) + safe persistence
-  mail.py             mail adapter interface + mock mailbox
-  evals_runner.py     20 evaluation questions
-  cli.py              commands above
-tests/                pytest suite
-docs/                 architecture, decisions, test results
+config/          acme.yaml (client settings), rbac.yaml (users and roles)
+domain/          planning knowledge given to the model
+sql/views.sql    all business rules
+src/sapkit/      agent, tools, guardrails, rbac, workflow, loader, dq, web, mcp, evals, ...
+evals/           cases.yaml (41 cases), redteam/ (Promptfoo)
+deploy/          terraform/ for Google Cloud
+tests/           pytest suite
+docs/            documentation
 ```
-
-## Onboarding a real SAP client
-
-1. Copy `config/acme.yaml` and set the client's plants, scope, cover rule, thresholds and exclusions.
-2. Load the client's extract into the same table shapes (`synth.SCHEMA` lists them; they are standard SAP tables and fields).
-3. Run `verify`-style checks against a handful of materials the client's planners can confirm by hand.
-4. Replace `MockMailbox` with a Gmail or Outlook adapter implementing `MailAdapter`.
