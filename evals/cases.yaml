@@ -193,7 +193,7 @@ cases:
     question: Which supplier replies need review?
     tools: []
     outcome: refused
-    facts: [["access", "can't", "cannot", "not able", "don't have", "do not have", "role", "permission", "isn't available", "not available"]]
+    facts: [["access", "can't", "cannot", "not able", "don't have", "do not have", "role", "permission", "isn't available", "not available", "none of the tools", "only"]]
     must_not: ["{review} supplier replies", "{review_comma} supplier replies"]
   - id: RB-03
     category: rbac
